@@ -1,16 +1,17 @@
 name: Build and Push Keystone OCM Bundles
 
-# Builds and signs two OCM bundles (mirrors greenhouse naming convention):
-#   1. keystone-bundle       (keystone + seeder charts + all images from Keppel)
-#   2. prerequisites-bundle  (vault + eso + rabbitmq charts — keystone prerequisites)
+# GHCR TESTING MODE — uses committed charts, ubuntu-latest runners.
+# Keystone/seeder charts are used from repo (charts/*.tgz); no Keppel pull.
+# Keystone bundle is pushed without --copy-resources (Keppel images not reachable
+# from GitHub-hosted runners). Prerequisites bundle uses --copy-resources since
+# vault/ESO/rabbitmq images are on public registries.
 #
-# Both bundles are pushed to ghcr.io/<owner>/ with --copy-resources so all
-# referenced container images are transferred alongside the chart artifacts.
+# TODO: switch runs-on to sap-keppel and restore Keppel pulls + --copy-resources
+# for keystone bundle once JFrog repo (sci-ocm-bundles) is provisioned and
+# self-hosted ARC runner is stable.
 #
 # Signing: keyless Sigstore OIDC (cosign + id-token: write).
 # Verify after push: ocm get componentversion on the live registry.
-#
-# Keppel (keppel.eu-nl-1.cloud.sap) provides anonymous read access for SAP charts.
 
 on:
   workflow_dispatch:
@@ -37,10 +38,9 @@ env:
 jobs:
 
   # ── Job 1: keystone application bundle ──────────────────────────────────────
-  # Requires a self-hosted runner with network access to keppel.eu-nl-1.cloud.sap
   build-keystone:
     name: Build and push keystone bundle
-    runs-on: sap-keppel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -64,14 +64,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
-      - name: Pull keystone chart from Keppel
-        run: |
-          mkdir -p charts
-          helm pull oci://${KEPPEL_REGISTRY}/ccloud-helm/keystone \
-            --version "${KEYSTONE_VERSION}" \
-            --destination charts/
-          echo "Pulled keystone-${KEYSTONE_VERSION}.tgz"
-
       - name: Patch keystone chart (Chart.Version + integer keys)
         run: |
           TMPDIR=$(mktemp -d)
@@ -89,13 +81,6 @@ jobs:
           helm package $TMPDIR/keystone --destination charts/
           rm -rf $TMPDIR
           echo "Patched keystone-${KEYSTONE_VERSION}.tgz"
-
-      - name: Pull seeder chart from Keppel
-        run: |
-          helm pull oci://${KEPPEL_REGISTRY}/ccloud-helm/openstack-seeder \
-            --version "${SEEDER_VERSION}" \
-            --destination charts/
-          echo "Pulled openstack-seeder-${SEEDER_VERSION}.tgz"
 
       - name: Patch seeder chart (Chart.Version)
         run: |
@@ -147,7 +132,6 @@ jobs:
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           ocm transfer ctf \
-            --copy-resources \
             keystone-bundle.ctf \
             oci://ghcr.io/${OWNER}/keystone
 
@@ -172,10 +156,9 @@ jobs:
             ocm.software/sap/keystone/core:${KEYSTONE_VERSION}
 
   # ── Job 2: prerequisites bundle (vault + eso + rabbitmq) ───────────────────
-  # Requires a self-hosted runner with network access to keppel.eu-nl-1.cloud.sap
   build-prerequisites:
     name: Build and push prerequisites bundle
-    runs-on: sap-keppel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
