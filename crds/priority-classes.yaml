@@ -1,0 +1,15 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: critical-infrastructure
+value: 1000
+globalDefault: false
+description: "Stub for SAP charts — mirrors production priority class used by MariaDB and Memcached"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: critical-payload
+value: 900
+globalDefault: false
+description: "Stub for SAP charts — mirrors production priority class used by Keystone API"

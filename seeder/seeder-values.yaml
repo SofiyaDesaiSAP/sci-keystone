@@ -1,0 +1,25 @@
+# Non-secret openstack-seeder values for test cluster.
+# Admin password injected at deploy time via --set keystone.password=...
+# (extracted from keystone-helm-values K8s Secret, api.adminPassword key)
+
+global:
+  region: test
+  tld: cloud.sap
+  registry: keppel.eu-nl-1.cloud.sap/ccloud
+
+keystone:
+  authUrl: "http://keystone.monsoon3.svc.cluster.local:5000"
+  identityApiVersion: 3
+  username: admin
+  userDomainId: default
+  projectName: admin
+  projectDomainId: default
+
+sentry:
+  enabled: false
+
+# Enable RBAC so the seeder pod has permission to create/manage CRDs and OpenstackSeed objects
+rbac:
+  enabled: true
+
+ignoreNamespace: monsoon3global

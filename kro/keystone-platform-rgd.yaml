@@ -1,0 +1,560 @@
+# DEPRECATED: Replaced by ocm/deploy/keystone-kro-rgd.yaml + ocm/deploy/infra-kro-rgd.yaml
+# (greenhouse architecture — new OCM k8s toolkit v0.19.1 API).
+# This RGD uses old FluxDeployer-based OCM controller (ComponentVersion/Resource/FluxDeployer).
+# New RGDs use Repository → Component → Resource (additionalStatusFields) → OCIRepository → HelmRelease.
+# Kept for reference. Use `make deploy-apply deploy-instance-keystone deploy-instance-infra` instead.
+#
+# kro ResourceGraphDefinition — KeystonePlatform
+#
+# Defines a KeystonePlatform custom resource that, when instantiated, kro expands
+# into all OCM CRs required for the full keystone stack deployment:
+#   4 × ComponentVersion (vault, eso, rabbitmq, keystone)
+#   5 × Resource (vault-chart, eso-chart, rabbitmq-chart, keystone-chart, seeder-chart)
+#   5 × FluxDeployer (vault, eso, rabbitmq, keystone, openstack-seeder)
+#
+# Primary use case: air-gated sovereign cloud deployment where:
+#   1. OCM bundle is transferred to a local on-site registry (rbsc) via
+#      `ocm transfer componentversion --copy-resources oci://ghcr.io/... oci://rbsc.local/...`
+#   2. Operator applies a single KeystonePlatform CR pointing to the local registry
+#   3. kro creates all OCM CRs with registry values set to the local RBSC paths
+#
+# For development (direct Keppel/GHCR access), use ocm/infra-ocm-deploy.yaml and
+# ocm/keystone-ocm-deploy.yaml directly instead.
+#
+# IMPORTANT: OCM image path after transfer preserves the original image path structure
+# under the target registry. Verify exact paths for your rbsc instance with:
+#   ocm get resources oci://<rbsc-url>/<ctf-name>//ocm.software/sap/keystone
+# and adjust registry sub-paths below if needed.
+#
+# Prerequisites (bootstrap tier, install before applying this RGD):
+#   helm install cert-manager ...
+#   helm install ocm-controller ...
+#   flux install ...
+#   helm install kro oci://ghcr.io/kro-run/kro/kro --version <latest>
+#
+# Usage:
+#   kubectl apply -f kro/keystone-platform-rgd.yaml
+#   kubectl apply -f kro/keystone-platform-cr.yaml   # see example at bottom of file
+
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: keystone-platform
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: KeystonePlatform
+    spec:
+      # registryBase: base URL of the on-site OCI registry where the OCM bundle was transferred.
+      # After `ocm transfer --copy-resources ghcr.io/... oci://rbsc.local/keystone-ctf`, set this
+      # to the target path: e.g. "rbsc.local/keystone-ctf"
+      # For GHCR staging (pre-production): "ghcr.io/sofiyadesaisap/keystone-ctf"
+      registryBase: string
+
+      namespace: string
+      keystoneVersion: string
+      seederVersion: string
+      vaultVersion: string
+      esoVersion: string
+      rabbitmqVersion: string
+      keystoneImageTag: string
+      keystoneMetricsImageTag: string
+      proxysqlImageTag: string
+      mariadbImageTag: string
+      memcachedImageTag: string
+      vaultImageTag: string
+      vaultInjectorTag: string
+      esoImageTag: string
+      rabbitmqImageTag: string
+      registryCredsSecret: string
+
+  resources:
+
+  # ─── Vault ──────────────────────────────────────────────────────────────────
+
+  - id: vaultCV
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: ComponentVersion
+      metadata:
+        name: vault
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        component: ocm.software/sap/keystone/vault
+        version:
+          semver: ">=${schema.spec.vaultVersion}"
+        repository:
+          url: ${schema.spec.registryBase}
+          secretRef:
+            name: ${schema.spec.registryCredsSecret}
+
+  - id: vaultResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: vault-chart
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: ComponentVersion
+          name: vault
+          namespace: ${schema.spec.namespace}
+          resourceRef:
+            name: vault-chart
+
+  - id: vaultDeployer
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: FluxDeployer
+      metadata:
+        name: vault
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: Resource
+          name: vault-chart
+          namespace: ${schema.spec.namespace}
+        helmReleaseTemplate:
+          interval: 5m
+          releaseName: vault
+          targetNamespace: vault
+          install:
+            timeout: 10m
+            crds: CreateReplace
+            createNamespace: true
+          upgrade:
+            timeout: 10m
+          values:
+            global:
+              imagePullSecrets:
+                - name: local-registry-creds
+            server:
+              standalone:
+                enabled: true
+              dataStorage:
+                enabled: true
+                storageClass: default
+              image:
+                repository: "${schema.spec.registryBase}/hashicorp/vault"
+                tag: ${schema.spec.vaultImageTag}
+            injector:
+              image:
+                repository: "${schema.spec.registryBase}/hashicorp/vault-k8s"
+                tag: ${schema.spec.vaultInjectorTag}
+            ui:
+              enabled: true
+
+  # ─── External Secrets Operator ──────────────────────────────────────────────
+
+  - id: esoCV
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: ComponentVersion
+      metadata:
+        name: eso
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        component: ocm.software/sap/keystone/eso
+        version:
+          semver: ">=${schema.spec.esoVersion}"
+        repository:
+          url: ${schema.spec.registryBase}
+          secretRef:
+            name: ${schema.spec.registryCredsSecret}
+
+  - id: esoResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: eso-chart
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: ComponentVersion
+          name: eso
+          namespace: ${schema.spec.namespace}
+          resourceRef:
+            name: eso-chart
+
+  - id: esoDeployer
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: FluxDeployer
+      metadata:
+        name: eso
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: Resource
+          name: eso-chart
+          namespace: ${schema.spec.namespace}
+        helmReleaseTemplate:
+          interval: 5m
+          releaseName: external-secrets
+          targetNamespace: external-secrets
+          install:
+            timeout: 10m
+            crds: CreateReplace
+            createNamespace: true
+          upgrade:
+            timeout: 10m
+          values:
+            installCRDs: true
+            imagePullSecrets:
+              - name: local-registry-creds
+            image:
+              repository: "${schema.spec.registryBase}/external-secrets/external-secrets"
+              tag: ${schema.spec.esoImageTag}
+
+  # ─── RabbitMQ ───────────────────────────────────────────────────────────────
+
+  - id: rabbitmqCV
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: ComponentVersion
+      metadata:
+        name: rabbitmq
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        component: ocm.software/sap/keystone/rabbitmq
+        version:
+          semver: ">=${schema.spec.rabbitmqVersion}"
+        repository:
+          url: ${schema.spec.registryBase}
+          secretRef:
+            name: ${schema.spec.registryCredsSecret}
+
+  - id: rabbitmqResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: rabbitmq-chart
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: ComponentVersion
+          name: rabbitmq
+          namespace: ${schema.spec.namespace}
+          resourceRef:
+            name: rabbitmq-chart
+
+  - id: rabbitmqDeployer
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: FluxDeployer
+      metadata:
+        name: rabbitmq
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: Resource
+          name: rabbitmq-chart
+          namespace: ${schema.spec.namespace}
+        helmReleaseTemplate:
+          interval: 5m
+          releaseName: rabbitmq
+          targetNamespace: ${schema.spec.namespace}
+          install:
+            timeout: 5m
+          upgrade:
+            timeout: 5m
+          values:
+            image: "${schema.spec.registryBase}/library/rabbitmq:${schema.spec.rabbitmqImageTag}"
+            imagePullSecrets:
+              - name: local-registry-creds
+
+  # ─── Keystone ───────────────────────────────────────────────────────────────
+
+  - id: keystoneCV
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: ComponentVersion
+      metadata:
+        name: keystone
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        component: ocm.software/sap/keystone
+        version:
+          semver: "=${schema.spec.keystoneVersion}"
+        repository:
+          url: ${schema.spec.registryBase}
+          secretRef:
+            name: ${schema.spec.registryCredsSecret}
+
+  - id: keystoneResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: keystone-chart
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: ComponentVersion
+          name: keystone
+          namespace: ${schema.spec.namespace}
+          resourceRef:
+            name: keystone-chart
+            version: ${schema.spec.keystoneVersion}
+
+  - id: keystoneDeployer
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: FluxDeployer
+      metadata:
+        name: keystone
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: Resource
+          name: keystone-chart
+          namespace: ${schema.spec.namespace}
+        waitForReady: true
+        helmReleaseTemplate:
+          interval: 5m
+          releaseName: keystone
+          targetNamespace: ${schema.spec.namespace}
+          dependsOn:
+            - name: rabbitmq
+              namespace: ${schema.spec.namespace}
+          install:
+            timeout: 20m0s
+            crds: CreateReplace
+            disableWait: true
+          upgrade:
+            timeout: 20m0s
+            disableWait: true
+          valuesFrom:
+          - kind: Secret
+            name: keystone-helm-values
+            valuesKey: values.yaml
+          values:
+            imagePullSecrets:
+              - local-registry-creds
+            global:
+              database: mariadb
+              linkerd_requested: false
+              region: test
+              tld: cloud.sap
+              # All SAP images use this registry prefix. After OCM transfer to rbsc, the
+              # images land under <registryBase>/ccloud/... preserving the Keppel path structure.
+              registry: "${schema.spec.registryBase}/ccloud"
+              registryAlternateRegion: "${schema.spec.registryBase}/ccloud"
+              dockerHubMirror: "${schema.spec.registryBase}/ccloud-dockerhub-mirror"
+              dockerHubMirrorAlternateRegion: "${schema.spec.registryBase}/ccloud-dockerhub-mirror"
+              ghcrIoMirrorAlternateRegion: "${schema.spec.registryBase}"
+            debug: false
+            run_db_migration: false
+            api:
+              imageTag: ${schema.spec.keystoneImageTag}
+              adminUser: admin
+              adminProjectName: admin
+              cloudAdminDomainName: ccadmin
+              cloudAdminProjectName: cloud_admin
+              cloudAdminProjectId: '00000000-0000-0000-0000-000000000000'
+              default_tags:
+              - test-tag
+              auth:
+                methods: password,token,application_credential
+              cc_radius:
+                host: "localhost"
+                port: 16451
+              fernet:
+                maxActiveKeys: 3
+              metrics:
+                imageTag: ${schema.spec.keystoneMetricsImageTag}
+              replicas: 1
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 192Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1500Mi
+              token:
+                expiration: 28800
+            cron:
+              imageTag: ${schema.spec.keystoneImageTag}
+              cronSchedule: "0 3 * * *"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 200Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+            audit:
+              central_service:
+                host: "rabbitmq.${schema.spec.namespace}.svc.cluster.local"
+                port: 5672
+            services:
+              type: ClusterIP
+              ingress:
+                enabled: false
+              public:
+                scheme: http
+                host: keystone-api
+              admin:
+                scheme: http
+                host: keystone-api
+            federation:
+              oidc:
+                enabled: false
+            postgresql:
+              enabled: false
+            max_pool_size: 50
+            max_overflow: -1
+            proxysql:
+              imageRepository: "${schema.spec.registryBase}/ccloud/shared-app-images/proxysql"
+              imageTag: ${schema.spec.proxysqlImageTag}
+              connect_retries_delay: 1000
+              mode: host_alias
+              max_connections_per_proc: 15
+            priorityClassName: ""
+            mariadb:
+              enabled: true
+              priority_class: ""
+              priority_class_backup: ""
+              priority_class_sync: ""
+              persistence_claim:
+                enabled: false
+              users:
+                keystone:
+                  name: keystone
+              backup_v2:
+                enabled: false
+              backup:
+                enabled: false
+            mysql_metrics:
+              enabled: true
+            memcached:
+              enabled: true
+              priority_class: ""
+              resources:
+                enabled: true
+                limits:
+                  memory: 256Mi
+                  cpu: 500m
+                requests:
+                  memory: 64Mi
+                  cpu: 10m
+            sre:
+              enabled: false
+            alerts:
+              enabled: false
+            sentry:
+              enabled: false
+            osprofiler:
+              enabled: false
+
+  # ─── openstack-seeder ───────────────────────────────────────────────────────
+
+  - id: seederResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: seeder-chart
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: ComponentVersion
+          name: keystone
+          namespace: ${schema.spec.namespace}
+          resourceRef:
+            name: seeder-chart
+            version: ${schema.spec.seederVersion}
+
+  - id: seederDeployer
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: FluxDeployer
+      metadata:
+        name: openstack-seeder
+        namespace: ${schema.spec.namespace}
+      spec:
+        interval: 10m
+        sourceRef:
+          kind: Resource
+          name: seeder-chart
+          namespace: ${schema.spec.namespace}
+        helmReleaseTemplate:
+          interval: 10m
+          releaseName: openstack-seeder
+          targetNamespace: ${schema.spec.namespace}
+          dependsOn:
+            - name: keystone
+              namespace: ${schema.spec.namespace}
+          install:
+            timeout: 10m
+            crds: CreateReplace
+          upgrade:
+            timeout: 10m
+          valuesFrom:
+          - kind: Secret
+            name: seeder-values
+            valuesKey: values.yaml
+          values:
+            global:
+              region: test
+              tld: cloud.sap
+              registry: "${schema.spec.registryBase}/ccloud"
+            keystone:
+              authUrl: "http://keystone.${schema.spec.namespace}.svc.cluster.local:5000"
+              identityApiVersion: 3
+              username: admin
+              userDomainId: default
+              projectName: admin
+              projectDomainId: default
+            sentry:
+              enabled: false
+            rbac:
+              enabled: true
+            ignoreNamespace: monsoon3global
+
+---
+# Example KeystonePlatform CR — apply after the RGD above is installed and kro processes it.
+# Replace registryBase with your actual on-site registry URL after running:
+#   ocm transfer componentversion --copy-resources \
+#     oci://ghcr.io/sofiyadesaisap/keystone-ctf//ocm.software/sap/keystone-platform \
+#     oci://rbsc.local/keystone-ctf
+#
+# apiVersion: kro.run/v1alpha1
+# kind: KeystonePlatform
+# metadata:
+#   name: keystone
+#   namespace: monsoon3
+# spec:
+#   registryBase: rbsc.local/keystone-ctf
+#   namespace: monsoon3
+#   keystoneVersion: "0.13.3"
+#   seederVersion: "0.1.0"
+#   vaultVersion: "0.28.1"
+#   esoVersion: "0.10.7"
+#   rabbitmqVersion: "1.2.0"
+#   keystoneImageTag: "epoxy-20260721161808"
+#   keystoneMetricsImageTag: "0.28.0-20260303111049"
+#   proxysqlImageTag: "3.0.5-latest"
+#   mariadbImageTag: "10.11.18"
+#   memcachedImageTag: "1.6.39-alpine3.22"
+#   vaultImageTag: "1.17.2"
+#   vaultInjectorTag: "1.4.2"
+#   esoImageTag: "v0.10.7"
+#   rabbitmqImageTag: "3.13-management"
+#   registryCredsSecret: local-registry-creds

@@ -1,0 +1,119 @@
+# OCM component descriptor — keystone prerequisites bundle (vault + eso + rabbitmq).
+# Mirrors ocm-greenhouse/prerequisites-component.yaml (greenhouse architecture).
+#
+# Variables resolved by `ocm add componentversions --addenv ... KEY=VALUE`:
+#   VAULT_VERSION    ESO_VERSION    RABBITMQ_VERSION    INFRA_VERSION
+#   VAULT_IMAGE_TAG    VAULT_INJECTOR_TAG    ESO_IMAGE_TAG    RABBITMQ_IMAGE_TAG
+#
+# Charts must be prepared first: make chart-prepare-vault chart-prepare-eso chart-prepare-rabbitmq
+# Build:  make build-prerequisites
+# Push:   make push-prerequisites
+# Sign:   make sign-sigstore-prerequisites
+
+components:
+
+  # ─── Vault ────────────────────────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/vault
+    version: ${VAULT_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: vault
+    resources:
+      - name: vault-chart
+        type: helmChart
+        version: ${VAULT_VERSION}
+        input:
+          type: file
+          path: charts/vault-${VAULT_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
+
+      - name: vault-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "hashicorp/vault:${VAULT_IMAGE_TAG}"
+
+      - name: vault-injector-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "hashicorp/vault-k8s:${VAULT_INJECTOR_TAG}"
+
+
+  # ─── External Secrets Operator ────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/eso
+    version: ${ESO_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: external-secrets
+    resources:
+      - name: eso-chart
+        type: helmChart
+        version: ${ESO_VERSION}
+        input:
+          type: file
+          path: charts/external-secrets-${ESO_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
+
+      - name: eso-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "oci.external-secrets.io/external-secrets/external-secrets:${ESO_IMAGE_TAG}"
+
+
+  # ─── RabbitMQ ─────────────────────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/rabbitmq
+    version: ${RABBITMQ_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: rabbitmq
+    resources:
+      - name: rabbitmq-chart
+        type: helmChart
+        version: ${RABBITMQ_VERSION}
+        input:
+          type: file
+          path: charts/rabbitmq-${RABBITMQ_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
+
+      - name: rabbitmq-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "rabbitmq:${RABBITMQ_IMAGE_TAG}"
+
+
+  # ─── Umbrella / infra top-level component ─────────────────────────────────────
+  # References all infra sub-components. Sign this with --recursive to propagate
+  # the signature to all referenced components.
+  - name: ocm.software/sap/keystone/infra
+    version: ${INFRA_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: keystone-prerequisites
+    componentReferences:
+      - name: vault
+        componentName: ocm.software/sap/keystone/infra/vault
+        version: ${VAULT_VERSION}
+      - name: eso
+        componentName: ocm.software/sap/keystone/infra/eso
+        version: ${ESO_VERSION}
+      - name: rabbitmq
+        componentName: ocm.software/sap/keystone/infra/rabbitmq
+        version: ${RABBITMQ_VERSION}

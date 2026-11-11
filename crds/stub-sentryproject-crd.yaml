@@ -1,0 +1,25 @@
+---
+# Stub CRD for SentryProject (sentry.sap.cc/v1)
+# SAP-internal Sentry operator is not available on this test cluster.
+# This stub lets charts that create SentryProject resources install without error.
+# The CRD has no controller — objects are accepted by the API server but ignored.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sentryprojects.sentry.sap.cc
+spec:
+  group: sentry.sap.cc
+  names:
+    kind: SentryProject
+    listKind: SentryProjectList
+    plural: sentryprojects
+    singular: sentryproject
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true

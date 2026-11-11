@@ -1,0 +1,245 @@
+# kro ResourceGraphDefinition — KeystoneStack
+#
+# Mirrors ocm-greenhouse/deploy/kro-rgd.yaml for keystone.
+# New OCM k8s toolkit API (v0.19.1): Repository → Component → Resource → OCIRepository → HelmRelease.
+# No Snapshots, no in-cluster registry, no TLS cert — chart digest is read directly
+# from Resource.status.additional.oci via additionalStatusFields CEL.
+#
+# Deploys:
+#   keystone-chart (from ocm.software/sap/keystone/core) → OCIRepository → HelmRelease
+#   seeder-chart  (from ocm.software/sap/keystone/core) → OCIRepository → HelmRelease
+#   seeder HelmRelease dependsOn keystone HelmRelease
+#
+# Prerequisites (ocm-greenhouse bootstrap or manual install):
+#   cert-manager, ocm-controller v0.19.1, flux, kro v0.9.x
+#
+# Usage:
+#   kubectl apply -k ocm/deploy/          # install RGDs
+#   kubectl apply -f ocm/deploy/keystone-instance.yaml   # instantiate
+
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: keystone-stack
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: KeystoneStack
+    spec:
+      # onSiteRegistry: OCI registry base where keystone OCM bundle was pushed/transferred.
+      # For GHCR staging: "ghcr.io/<owner>/keystone"
+      # For air-gated on-site: "rbsc.<site>/keystone"
+      onSiteRegistry: "string"
+      # registrySecretName: K8s Secret with OCI registry credentials (for OCM controller + Flux).
+      registrySecretName: "string"
+      # componentVersion: semver constraint for ocm.software/sap/keystone, e.g. ">=0.13.3"
+      componentVersion: "string"
+      # valuesSecretName: K8s Secret (key: values.yaml) with keystone Helm values overrides.
+      valuesSecretName: "string"
+      # seederValuesSecretName: K8s Secret (key: values.yaml) with openstack-seeder values.
+      seederValuesSecretName: "string"
+    status:
+      keystoneReady: "${keystoneHR.status.conditions[0].status}"
+
+  resources:
+
+  # ─── OCM Repository ───────────────────────────────────────────────────────────
+  - id: keystoneRepository
+    readyWhen:
+      - "${keystoneRepository.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}"
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Repository
+      metadata:
+        name: keystone-repository
+        namespace: monsoon3
+      spec:
+        repositoryRef:
+          url: "oci://${schema.spec.onSiteRegistry}"
+          secretRef:
+            name: "${schema.spec.registrySecretName}"
+
+  # ─── OCM Component ────────────────────────────────────────────────────────────
+  - id: keystoneComponent
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Component
+      metadata:
+        name: keystone-component
+        namespace: monsoon3
+      spec:
+        component: ocm.software/sap/keystone
+        semver: "${schema.spec.componentVersion}"
+        repositoryRef:
+          name: "${keystoneRepository.metadata.name}"
+
+  # ─── Keystone chart resource ──────────────────────────────────────────────────
+  # byReference resolves keystone-chart through the 'core' componentReference.
+  # additionalStatusFields CEL exposes registry/repository/digest in status.additional.oci
+  # so the OCIRepository URL can be constructed without a Snapshot.
+  - id: keystoneChartResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: keystone-chart-resource
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        componentRef:
+          name: "${keystoneComponent.metadata.name}"
+        resource:
+          byReference:
+            resource:
+              name: keystone-chart
+            referencePath:
+              - name: core
+        additionalStatusFields:
+          oci: resource.access.toOCI()
+
+  # ─── Keystone OCIRepository ───────────────────────────────────────────────────
+  - id: keystoneOCIRepo
+    template:
+      apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: keystone-oci
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        url: "oci://${keystoneChartResource.status.additional.oci.registry}/${keystoneChartResource.status.additional.oci.repository}"
+        ref:
+          digest: "${keystoneChartResource.status.additional.oci.digest}"
+        secretRef:
+          name: "${schema.spec.registrySecretName}"
+        layerSelector:
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          operation: copy
+
+  # ─── Keystone HelmRelease ─────────────────────────────────────────────────────
+  - id: keystoneHR
+    template:
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: keystone
+        namespace: monsoon3
+      spec:
+        interval: 5m
+        releaseName: keystone
+        chartRef:
+          kind: OCIRepository
+          name: "${keystoneOCIRepo.metadata.name}"
+          namespace: monsoon3
+        install:
+          timeout: 20m
+          crds: CreateReplace
+          disableWait: true
+        upgrade:
+          timeout: 20m
+          disableWait: true
+          remediation:
+            retries: 3
+        valuesFrom:
+          - kind: Secret
+            name: "${schema.spec.valuesSecretName}"
+            valuesKey: values.yaml
+        values:
+          global:
+            database: mariadb
+            linkerd_requested: false
+            region: test
+            tld: cloud.sap
+            registry: "${schema.spec.onSiteRegistry}/ccloud"
+            registryAlternateRegion: "${schema.spec.onSiteRegistry}/ccloud"
+            dockerHubMirror: "${schema.spec.onSiteRegistry}/ccloud-dockerhub-mirror"
+            dockerHubMirrorAlternateRegion: "${schema.spec.onSiteRegistry}/ccloud-dockerhub-mirror"
+            ghcrIoMirrorAlternateRegion: "${schema.spec.onSiteRegistry}"
+          imagePullSecrets:
+            - name: "${schema.spec.registrySecretName}"
+
+  # ─── Seeder chart resource ────────────────────────────────────────────────────
+  - id: seederChartResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: seeder-chart-resource
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        componentRef:
+          name: "${keystoneComponent.metadata.name}"
+        resource:
+          byReference:
+            resource:
+              name: seeder-chart
+            referencePath:
+              - name: core
+        additionalStatusFields:
+          oci: resource.access.toOCI()
+
+  # ─── Seeder OCIRepository ─────────────────────────────────────────────────────
+  - id: seederOCIRepo
+    template:
+      apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: seeder-oci
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        url: "oci://${seederChartResource.status.additional.oci.registry}/${seederChartResource.status.additional.oci.repository}"
+        ref:
+          digest: "${seederChartResource.status.additional.oci.digest}"
+        secretRef:
+          name: "${schema.spec.registrySecretName}"
+        layerSelector:
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          operation: copy
+
+  # ─── Seeder HelmRelease ───────────────────────────────────────────────────────
+  - id: seederHR
+    template:
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: openstack-seeder
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        releaseName: openstack-seeder
+        chartRef:
+          kind: OCIRepository
+          name: "${seederOCIRepo.metadata.name}"
+          namespace: monsoon3
+        dependsOn:
+          - name: "${keystoneHR.metadata.name}"
+        install:
+          timeout: 10m
+          crds: CreateReplace
+        upgrade:
+          timeout: 10m
+          remediation:
+            retries: 3
+        valuesFrom:
+          - kind: Secret
+            name: "${schema.spec.seederValuesSecretName}"
+            valuesKey: values.yaml
+        values:
+          global:
+            region: test
+            tld: cloud.sap
+            registry: "${schema.spec.onSiteRegistry}/ccloud"
+          keystone:
+            authUrl: "http://keystone.monsoon3.svc.cluster.local:5000"
+            identityApiVersion: 3
+            username: admin
+            userDomainId: default
+            projectName: admin
+            projectDomainId: default
+          sentry:
+            enabled: false
+          rbac:
+            enabled: true
+          ignoreNamespace: monsoon3global

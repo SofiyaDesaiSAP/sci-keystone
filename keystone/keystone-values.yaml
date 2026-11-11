@@ -1,0 +1,155 @@
+# Non-secret Keystone values for test cluster deployment.
+# Secret values come from ESO → K8s Secret 'keystone-helm-values' (values.yaml key).
+#
+# Production equivalent: merged from:
+#   global/values/db-backup-v2.yaml
+#   global/values/keystone.yaml
+#   <region>/values/globals.yaml
+#   <region>/values/openstack-globals.yaml
+#   <region>/values/keystone.yaml
+# (all in github.wdf.sap.corp:cc/secrets.git)
+
+# ── Global (from globals.yaml / openstack-globals.yaml in production) ───────
+global:
+  database: mariadb
+  linkerd_requested: false
+  region: test
+  tld: cloud.sap
+  registry: keppel.eu-nl-1.cloud.sap/ccloud
+  registryAlternateRegion: keppel.eu-nl-1.cloud.sap/ccloud
+  dockerHubMirrorAlternateRegion: keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror
+  # ccloud-ghcrio-mirror requires SAP auth — use ghcr.io directly for this test cluster
+  ghcrIoMirrorAlternateRegion: ghcr.io
+
+# ── Keystone API ─────────────────────────────────────────────────────────────
+debug: false
+run_db_migration: false
+
+api:
+  imageTag: 'epoxy-20260721161808'
+
+  adminUser: admin
+  adminProjectName: admin
+  cloudAdminDomainName: ccadmin
+  cloudAdminProjectName: cloud_admin
+  # Placeholder — update to real project ID after seeding (Phase 8)
+  cloudAdminProjectId: '00000000-0000-0000-0000-000000000000'
+
+  default_tags:
+    - test-tag
+
+  auth:
+    methods: password,token,application_credential
+
+  cc_radius:
+    host: "localhost"
+    port: 16451
+
+  fernet:
+    maxActiveKeys: 3
+
+  metrics:
+    imageTag: '0.28.0-20260303111049'
+
+  replicas: 1
+
+  # Override production-sized requests — test cluster has only ~750Mi free per node
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1500Mi
+
+  token:
+    expiration: 28800
+
+cron:
+  imageTag: 'epoxy-20260721161808'
+  cronSchedule: "0 3 * * *"
+
+# ── Audit (RabbitMQ — local, replaces Hermes) ────────────────────────────────
+audit:
+  central_service:
+    host: "rabbitmq.monsoon3.svc.cluster.local"
+    port: 5672
+
+# ── Services (no ingress for test cluster) ───────────────────────────────────
+services:
+  type: ClusterIP
+  ingress:
+    enabled: false
+  public:
+    scheme: http
+    host: keystone-api
+  admin:
+    scheme: http
+    host: keystone-api
+
+# ── Federation (no SAP IAS in test) ─────────────────────────────────────────
+federation:
+  oidc:
+    enabled: false
+
+# ── Database ─────────────────────────────────────────────────────────────────
+postgresql:
+  enabled: false
+
+max_pool_size: 50
+max_overflow: -1
+
+proxysql:
+  imageRepository: keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/proxysql
+  imageTag: '3.0.5-latest'  # keystone.yaml specifies 3.0.5-20260721161808 which doesn't exist; using 3.0.5-latest
+  connect_retries_delay: 1000
+  mode: host_alias
+  max_connections_per_proc: 15
+
+# Override SAP production PriorityClasses — none of these exist on a personal Gardener shoot cluster
+priorityClassName: ""
+
+mariadb:
+  enabled: true
+  priority_class: ""
+  priority_class_backup: ""
+  priority_class_sync: ""
+  persistence_claim:
+    enabled: false  # no PVC on test cluster — data stored in emptyDir (lost on restart, fine for test)
+  users:
+    keystone:
+      name: keystone
+  backup_v2:
+    enabled: false
+  backup:
+    enabled: false
+
+mysql_metrics:
+  enabled: true
+
+memcached:
+  enabled: true
+  priority_class: ""
+  # Override default 2048Mi limit which doesn't fit on this 2-node test cluster
+  resources:
+    enabled: true
+    limits:
+      memory: 256Mi
+      cpu: 500m
+    requests:
+      memory: 64Mi
+      cpu: 10m
+
+# Disable monitoring/alerting CRDs not present on this test cluster
+# (no Prometheus Operator, no Sentry operator)
+sre:
+  enabled: false
+
+alerts:
+  enabled: false
+
+sentry:
+  enabled: false
+
+osprofiler:
+  enabled: false

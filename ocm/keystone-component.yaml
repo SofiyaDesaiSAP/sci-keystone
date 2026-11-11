@@ -1,0 +1,160 @@
+# OCM component descriptor — keystone application bundle (greenhouse architecture).
+#
+# Variables resolved by `ocm add componentversions --addenv ... KEY=VALUE`:
+#   KEYSTONE_VERSION    SEEDER_VERSION
+#   KEYSTONE_IMAGE_TAG    KEYSTONE_METRICS_IMAGE_TAG    PROXYSQL_IMAGE_TAG    APACHE_EXPORTER_TAG
+#   MARIADB_IMAGE_TAG    MARIADB_POD_READINESS_TAG    MARIADB_ALPINE_TAG
+#   MYSQLD_EXPORTER_TAG    MEMCACHED_IMAGE_TAG    MEMCACHED_EXPORTER_TAG
+#   K8S_ENTRYPOINT_TAG    SQL_EXPORTER_TAG    SEEDER_IMAGE_TAG    ALPINE_KUBECTL_TAG
+#
+# Charts must be prepared first: make chart-prepare-keystone chart-prepare-seeder
+# Build:  make build-keystone
+# Push:   make push-keystone
+# Sign:   make sign-sigstore-keystone
+
+components:
+
+  # ─── ocm.software/sap/keystone/core — charts + all images ────────────────────
+  - name: ocm.software/sap/keystone/core
+    version: ${KEYSTONE_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: keystone-core
+    resources:
+
+      - name: keystone-chart
+        type: helmChart
+        version: ${KEYSTONE_VERSION}
+        input:
+          type: file
+          path: charts/keystone-${KEYSTONE_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
+
+      - name: seeder-chart
+        type: helmChart
+        version: ${SEEDER_VERSION}
+        input:
+          type: file
+          path: charts/openstack-seeder-${SEEDER_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
+
+      # Container images — bundled so `ocm transfer --copy-resources` copies them
+      # from source registries (Keppel/GHCR) to the target (on-site RBSC) preserving
+      # the source path. The kro RGD overrides global.registry at deploy time.
+
+      - name: keystone-api-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/loci-keystone:${KEYSTONE_IMAGE_TAG}"
+
+      - name: keystone-metrics-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/statsd-exporter:${KEYSTONE_METRICS_IMAGE_TAG}"
+
+      - name: proxysql-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/proxysql:${PROXYSQL_IMAGE_TAG}"
+
+      - name: apache-exporter-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/apache-exporter:${APACHE_EXPORTER_TAG}"
+
+      - name: mariadb-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG}"
+
+      - name: mariadb-pod-readiness-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/pod-readiness:${MARIADB_POD_READINESS_TAG}"
+
+      - name: mariadb-alpine-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/alpine-mariadb:${MARIADB_ALPINE_TAG}"
+
+      - name: mysqld-exporter-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG}"
+
+      - name: memcached-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/library/memcached:${MEMCACHED_IMAGE_TAG}"
+
+      - name: memcached-exporter-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}"
+
+      - name: kubernetes-entrypoint-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "ghcr.io/sapcc/kubernetes-entrypoint:${K8S_ENTRYPOINT_TAG}"
+
+      - name: sql-exporter-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/sql-exporter:${SQL_EXPORTER_TAG}"
+
+      - name: seeder-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/openstack-seeder:${SEEDER_IMAGE_TAG}"
+
+      - name: alpine-kubectl-image
+        type: ociArtifact
+        version: "1.0.0"
+        access:
+          type: ociArtifact
+          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/alpine-kubectl:${ALPINE_KUBECTL_TAG}"
+
+  # ─── ocm.software/sap/keystone — top-level product component ─────────────────
+  # References core via componentReference so `--copy-resources` and signing
+  # propagate recursively through the entire dependency tree.
+  - name: ocm.software/sap/keystone
+    version: ${KEYSTONE_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: keystone
+    componentReferences:
+      - name: core
+        componentName: ocm.software/sap/keystone/core
+        version: ${KEYSTONE_VERSION}

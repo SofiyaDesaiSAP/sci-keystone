@@ -1,0 +1,8 @@
+# NOTE: RabbitMQ is deployed via rabbitmq-deployment.yaml (plain Deployment + Service),
+# NOT via a Helm HelmRelease.
+#
+# Reason: Bitnami restricted free DockerHub image pulls after August 2025.
+# The Bitnami chart pulls docker.io/bitnami/rabbitmq which returns 404 for free users.
+#
+# The official rabbitmq:3.13-management image (Docker Hub) is used instead.
+# See: rabbitmq/rabbitmq-deployment.yaml

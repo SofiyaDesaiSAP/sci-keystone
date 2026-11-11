@@ -1,0 +1,1325 @@
+# ─── Configuration ────────────────────────────────────────────────────────────
+SHOOT_KUBECONFIG    ?= kubeconfig-for-shoot.yaml
+NAMESPACE           ?= monsoon3
+VAULT_NAMESPACE     ?= vault
+ESO_NAMESPACE       ?= external-secrets
+FLUX_SYSTEM_NS      ?= flux-system
+
+# Keppel (SAP internal OCI registry) — anonymous read access enabled
+KEPPEL_REGISTRY     ?= keppel.eu-nl-1.cloud.sap
+
+# GHCR (GitHub Container Registry) — for pushing packaged SAP charts
+GHCR_REGISTRY       ?= ghcr.io/sofiyadesaisap
+GITHUB_USER         ?= sofiyadesaisap
+# GITHUB_TOKEN env var must be set when pushing to ghcr.io
+
+# OCM (Open Component Model)
+# Packages appear under keystone-ctf/ prefix in GitHub packages (mirrors greenhouse/ pattern)
+OCM_REGISTRY        ?= ghcr.io/sofiyadesaisap/keystone-ctf
+OCM_COMPONENT       ?= ocm.software/sap/keystone
+OCM_PLATFORM_COMPONENT ?= ocm.software/sap/keystone-platform
+OCM_CTF             ?= keystone-ctf         # local CTF directory (gitignored, inside sci-keystone-deployment/)
+SIGNING_NAME        ?= keystone-sig
+SIGNING_KEY         ?= ocm/keystone-signing-key.pem
+SIGNING_PUBKEY      ?= ocm/keystone-signing-key-pub.pem
+
+# Vault
+VAULT_ADDR          ?= http://127.0.0.1:8200
+VAULT_INIT_FILE     ?= vault/vault-init.json        # DO NOT commit this file — add to .gitignore
+VAULT_KV_PATH       ?= sci/keystone
+
+# Chart versions — bump when upgrading, then re-run make chart-prepare + ocm-fresh-push
+KEYSTONE_VERSION    ?= 0.13.3
+SEEDER_VERSION      ?= 0.1.0
+VAULT_VERSION       ?= 0.28.1
+ESO_VERSION         ?= 0.10.7
+RABBITMQ_VERSION    ?= 1.2.0
+PLATFORM_VERSION    ?= 1.0.0
+
+# Image tags — currently deployed versions; bump when upgrading images, then re-run ocm-fresh-push.
+# These are declared as ociArtifact OCM resources so `ocm transfer --copy-resources`
+# bundles them alongside the charts for air-gated sovereign cloud delivery.
+KEYSTONE_IMAGE_TAG         ?= epoxy-20260721161808
+KEYSTONE_METRICS_IMAGE_TAG ?= 0.29.0-latest
+PROXYSQL_IMAGE_TAG         ?= 3.0.9-latest
+MARIADB_IMAGE_TAG          ?= 10.11.18
+MARIADB_POD_READINESS_TAG  ?= 20260521132613
+MARIADB_ALPINE_TAG         ?= python3.13-alpine3.23-20260506191108
+MYSQLD_EXPORTER_TAG        ?= v0.19.0
+MEMCACHED_IMAGE_TAG        ?= 1.6.39-alpine3.22
+MEMCACHED_EXPORTER_TAG     ?= v0.15.1
+K8S_ENTRYPOINT_TAG         ?= latest
+SQL_EXPORTER_TAG           ?= 20250707094646
+SEEDER_IMAGE_TAG           ?= latest
+ALPINE_KUBECTL_TAG         ?= latest-latest
+APACHE_EXPORTER_TAG        ?= latest
+VAULT_IMAGE_TAG            ?= 1.17.2
+VAULT_INJECTOR_TAG         ?= 1.4.2
+ESO_IMAGE_TAG              ?= v0.10.7
+RABBITMQ_IMAGE_TAG         ?= 3.13-management
+
+# Region / TLD — must match global.region and global.tld in keystone-values.yaml
+REGION              ?= test
+TLD                 ?= cloud.sap
+
+KC := KUBECONFIG=$(SHOOT_KUBECONFIG)
+
+# ─── Help ─────────────────────────────────────────────────────────────────────
+
+.PHONY: help
+help:
+	@echo ""
+	@echo "SAP SCI Keystone deployment — OCM + Flux (replaces Concourse)"
+	@echo ""
+	@echo "── Cluster Setup ─────────────────────────────────────────────────"
+	@echo "  make setup                     Create namespaces + label nodes"
+	@echo "  make bootstrap                 Full bootstrap: setup + cert-manager + OCM controller + Flux + kro"
+	@echo "  make cert-manager-install      Install cert-manager v1.17.2"
+	@echo "  make ocm-controller-install    Install OCM controller v0.33.0 (tlsCert.generateTlsCert=true)"
+	@echo "  make flux-install              Install Flux (helm-controller)"
+	@echo "  make kro-install               Install kro v0.9.4 (ResourceGraphDefinition controller)"
+	@echo "  make kro-rgd-apply             Apply KeystonePlatform ResourceGraphDefinition"
+	@echo "  make bootstrap-status          Show cert-manager / OCM / Flux pod status"
+	@echo "  make create-namespaces         Create monsoon3, vault, external-secrets namespaces"
+	@echo "  make label-nodes               Add openstack-control-plane=enabled to all nodes"
+	@echo ""
+	@echo "── Keppel (SAP internal registry) ───────────────────────────────"
+	@echo "  make keppel-login              Login to keppel.eu-nl-1.cloud.sap"
+	@echo "  make keppel-test               Test Keppel access (pull chart manifest)"
+	@echo "  make keppel-secret             Create keppel-creds secret on cluster"
+	@echo ""
+	@echo "── Vault (imperative ops — required after Vault HelmRelease is Ready) ─"
+	@echo "  make vault-init                Initialize Vault (saves keys to vault-init.json)"
+	@echo "  make vault-unseal              Unseal Vault using keys in vault-init.json"
+	@echo "  make vault-enable-kv           Enable KV v2 secrets engine (mount: secrets)"
+	@echo "  make vault-populate            Write all secrets to Vault (mirrors SAP prod paths)"
+	@echo "  make vault-token-secret        Create vault-token K8s Secret for ESO auth"
+	@echo "  make vault-status              Check Vault seal status + list secrets"
+	@echo "  make vault-port-forward        Port-forward Vault UI to localhost:8200"
+	@echo "  make vault-enable-k8s-auth     Enable Kubernetes auth method in Vault (optional)"
+	@echo ""
+	@echo "── External Secrets Operator (config — after ESO HelmRelease is Ready) ─"
+	@echo "  make eso-apply-clusterstore    Apply ClusterSecretStore (Vault backend)"
+	@echo "  make eso-apply-externalsecrets Apply ExternalSecret CRs"
+	@echo "  make eso-status                Check ExternalSecret sync status"
+	@echo "  make eso-refresh               Force re-sync all ExternalSecrets"
+	@echo ""
+	@echo "── RabbitMQ ──────────────────────────────────────────────────────"
+	@echo "  make rabbitmq-status           Check RabbitMQ status"
+	@echo "  make rabbitmq-port-forward     Port-forward RabbitMQ UI to localhost:15672"
+	@echo ""
+	@echo "── Chart preparation (one-time per version) ─────────────────────"
+	@echo "  make chart-prepare             Pull/package all charts, push to ghcr.io"
+	@echo "  make chart-prepare-vault       Pull hashicorp/vault chart, push to ghcr.io"
+	@echo "  make chart-prepare-eso         Pull external-secrets chart, push to ghcr.io"
+	@echo "  make chart-prepare-rabbitmq    Package rabbitmq/chart/, push to ghcr.io"
+	@echo "  make chart-prepare-keystone    Pull + patch + push keystone chart only"
+	@echo "  make chart-prepare-seeder      Pull + patch + push openstack-seeder chart only"
+	@echo ""
+	@echo "── OCM (primary deploy path — manages vault/eso/rabbitmq/keystone) ─────"
+	@echo "  make ocm-build                 Build multi-component OCM CTF"
+	@echo "  make ocm-sign                  Sign umbrella (keystone-platform) + sub-components"
+	@echo "  make ocm-push                  Transfer signed CTF to OCM_REGISTRY (ghcr.io)"
+	@echo "  make ocm-fresh-push            build + sign + push in one step"
+	@echo "  make ocm-signing-secret        Create keystone-signing-pubkey K8s Secret"
+	@echo "  make ocm-tls-cert-secret       Copy ocm-registry-tls-certs ocm-system → NAMESPACE"
+	@echo "  make ocm-deploy                Apply all ComponentVersion / Resource / FluxDeployer CRs"
+	@echo "  make ocm-status                Show all OCM + Flux component status"
+	@echo "  make ocm-fresh-install         Clear Helm history + re-apply OCM manifests (recovery)"
+	@echo ""
+	@echo "── Flux (status + recovery) ──────────────────────────────────────"
+	@echo "  make flux-status               Show HelmRelease + OCIRepository status"
+	@echo "  make flux-watch                Watch HelmRelease reconciliation live"
+	@echo "  make flux-reconcile            Force reconcile keystone HelmRelease"
+	@echo "  make flux-restart-controller   Restart frozen helm-controller"
+	@echo ""
+	@echo "── Stub CRDs (required before helm deploys) ─────────────────────"
+	@echo "  make crds-apply                Apply stub CRDs (OpenstackSeed, SentryProject, PrometheusRule)"
+	@echo ""
+	@echo "── CoreDNS (SAP DNS workaround, one-time per cluster) ───────────"
+	@echo "  make coredns-rewrite           Patch coredns-custom + restart CoreDNS"
+	@echo "  make coredns-verify            Verify SAP DNS rewrite resolves via TCP probe"
+	@echo ""
+	@echo "── openstack-seeder ──────────────────────────────────────────────"
+	@echo "  make seeder-helm-deploy        helm upgrade --install openstack-seeder (bypasses Flux)"
+	@echo "  make seeder-status             Check seeder pod + CRD status"
+	@echo "  make seeder-logs               Show seeder pod logs"
+	@echo "  make seeder-restart            Restart seeder pod (triggers retry)"
+	@echo ""
+	@echo "── Domain seeding ────────────────────────────────────────────────"
+	@echo "  make seed-domains              Apply OpenstackSeed CRs for domain seeds"
+	@echo "  make seed-status               List all OpenstackSeed objects"
+	@echo ""
+	@echo "── Keystone verification ─────────────────────────────────────────"
+	@echo "  make keystone-port-forward     Port-forward keystone-api to localhost:5000"
+	@echo "  make get-cloudadmin-project-id Get cloud_admin project ID from Keystone"
+	@echo "  make keystone-verify           Issue admin token + list domains/catalog"
+	@echo ""
+	@echo "── Troubleshooting ───────────────────────────────────────────────"
+	@echo "  make ocm-fresh-install         Clear Helm history + re-apply OCM manifests"
+	@echo "  make flux-restart-controller   Restart frozen helm-controller goroutine"
+	@echo "  make fix-immutable-roles       Unset immutable on bootstrap roles (once, before seeder)"
+	@echo ""
+	@echo "── Status ────────────────────────────────────────────────────────"
+	@echo "  make status                    Show all component status (OCM + Flux + pods)"
+	@echo "  make logs-keystone             Logs from keystone-api pods"
+	@echo "  make logs-seeder               Logs from openstack-seeder pod"
+	@echo ""
+	@echo "── Cleanup ───────────────────────────────────────────────────────"
+	@echo "  make uninstall-keystone        Remove Keystone OCM + Flux resources"
+	@echo "  make uninstall-all             Remove all resources + namespaces"
+	@echo ""
+
+# ─── Cluster Setup ────────────────────────────────────────────────────────────
+
+.PHONY: setup
+setup: create-namespaces label-nodes
+	@echo "Cluster setup complete."
+
+.PHONY: create-namespaces
+create-namespaces:
+	@echo "Creating namespaces..."
+	$(KC) kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	$(KC) kubectl create namespace $(VAULT_NAMESPACE) --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	$(KC) kubectl create namespace $(ESO_NAMESPACE) --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "Namespaces ready: $(NAMESPACE), $(VAULT_NAMESPACE), $(ESO_NAMESPACE)"
+
+.PHONY: label-nodes
+label-nodes:
+	@echo "Labeling nodes with openstack-control-plane=enabled..."
+	$(KC) kubectl label nodes --all openstack-control-plane=enabled --overwrite
+
+# bootstrap: full one-shot cluster bootstrap (setup + cert-manager + OCM controller + Flux)
+.PHONY: bootstrap
+bootstrap: setup cert-manager-install ocm-controller-install flux-install kro-install
+	@echo "Bootstrap complete. Verify with: make -f Makefile.scikeystone bootstrap-status"
+
+.PHONY: kro-install
+kro-install:
+	@echo "Installing kro v0.9.4..."
+	$(KC) kubectl create namespace kro-system --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	$(KC) kubectl apply -f https://github.com/kubernetes-sigs/kro/releases/download/v0.9.4/kro-core-install-manifests.yaml
+	$(KC) kubectl rollout status deployment/kro -n kro-system --timeout=120s
+	@echo "kro ready."
+
+.PHONY: kro-rgd-apply
+kro-rgd-apply:
+	@echo "Applying KeystonePlatform ResourceGraphDefinition..."
+	$(KC) kubectl apply -f kro/keystone-platform-rgd.yaml
+	@echo "RGD applied. Verify with: kubectl get resourcegraphdefinitions"
+
+
+.PHONY: cert-manager-install
+cert-manager-install:
+	@echo "Installing cert-manager v1.17.2..."
+	helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
+	helm repo update
+	$(KC) helm upgrade --install cert-manager jetstack/cert-manager \
+		--namespace cert-manager --create-namespace \
+		--set installCRDs=true \
+		--version v1.17.2 \
+		--wait
+	@echo "cert-manager ready."
+
+# tlsCert.generateTlsCert=true is mandatory: without it ocm-registry-tls-certs Secret
+# is never created and FluxDeployer OCIRepository pulls will fail.
+.PHONY: ocm-controller-install
+ocm-controller-install:
+	@echo "Installing OCM controller v0.33.0..."
+	$(KC) helm upgrade --install ocm-controller \
+		oci://ghcr.io/open-component-model/helm/ocm-controller \
+		--version v0.33.0 \
+		--namespace ocm-system --create-namespace \
+		--set tlsCert.generateTlsCert=true \
+		--wait
+	@echo "OCM controller ready."
+
+.PHONY: flux-install
+flux-install:
+	@echo "Installing Flux..."
+	TMPDIR=/tmp $(KC) flux install --namespace flux-system
+	@echo "Flux ready."
+
+.PHONY: bootstrap-status
+bootstrap-status:
+	@echo "\n── cert-manager ──────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n cert-manager
+	@echo "\n── OCM controller ────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n ocm-system
+	@echo "\n── Flux ──────────────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n flux-system
+
+# ─── Keppel ───────────────────────────────────────────────────────────────────
+
+.PHONY: ghcr-login
+ghcr-login:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Logging in to ghcr.io (docker — OCM reads ~/.docker/config.json)..."
+	@echo "$(GITHUB_TOKEN)" | docker login ghcr.io \
+		--username "$(GITHUB_USER)" --password-stdin
+
+.PHONY: keppel-login
+keppel-login:
+	@test -n "$(KEPPEL_USER)" || (echo "Error: KEPPEL_USER env var not set"; exit 1)
+	@test -n "$(KEPPEL_TOKEN)" || (echo "Error: KEPPEL_TOKEN env var not set"; exit 1)
+	@echo "Logging in to $(KEPPEL_REGISTRY) (docker — OCM reads ~/.docker/config.json)..."
+	@echo "$(KEPPEL_TOKEN)" | docker login $(KEPPEL_REGISTRY) \
+		--username "$(KEPPEL_USER)" --password-stdin
+
+.PHONY: keppel-test
+keppel-test:
+	@echo "Testing Keppel access — pulling keystone chart manifest..."
+	helm show chart oci://$(KEPPEL_REGISTRY)/ccloud-helm/keystone --version $(KEYSTONE_VERSION)
+
+.PHONY: keppel-secret
+keppel-secret:
+	@echo "Creating keppel-creds pull secret in $(NAMESPACE)..."
+	$(KC) kubectl create secret docker-registry keppel-creds \
+		--docker-server=$(KEPPEL_REGISTRY) \
+		--docker-username=$(KEPPEL_USER) \
+		--docker-password=$(KEPPEL_TOKEN) \
+		--namespace $(NAMESPACE) \
+		--dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "Creating keppel-creds pull secret in default namespace (for OCM controller)..."
+	$(KC) kubectl create secret docker-registry keppel-creds \
+		--docker-server=$(KEPPEL_REGISTRY) \
+		--docker-username=$(KEPPEL_USER) \
+		--docker-password=$(KEPPEL_TOKEN) \
+		--namespace default \
+		--dry-run=client -o yaml | $(KC) kubectl apply -f -
+
+# ─── Vault ────────────────────────────────────────────────────────────────────
+# Vault is deployed by OCM via FluxDeployer (ocm/infra-ocm-deploy.yaml).
+# The targets below are the imperative operations that cannot be declarative:
+# init, unseal, and secret population must be run after the Vault HelmRelease is Ready.
+
+.PHONY: vault-init
+vault-init:
+	@echo "Waiting for Vault pod to be running (not Ready — Vault is sealed until init)..."
+	$(KC) kubectl wait pod/vault-0 -n $(VAULT_NAMESPACE) \
+		--for=jsonpath='{.status.phase}'=Running --timeout=120s
+	@echo "Initializing Vault (1 key share, 1 key threshold for dev simplicity)..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		vault operator init -key-shares=1 -key-threshold=1 -format=json > $(VAULT_INIT_FILE)
+	@echo ""
+	@echo "IMPORTANT: Vault init keys saved to $(VAULT_INIT_FILE)"
+	@echo "           Add $(VAULT_INIT_FILE) to .gitignore — do NOT commit it!"
+	@echo "           Next: make vault-unseal"
+
+.PHONY: vault-unseal
+vault-unseal:
+	@test -f $(VAULT_INIT_FILE) || (echo "ERROR: $(VAULT_INIT_FILE) not found. Run make vault-init first."; exit 1)
+	$(eval UNSEAL_KEY := $(shell cat $(VAULT_INIT_FILE) | python3 -c "import sys,json; print(json.load(sys.stdin)['unseal_keys_b64'][0])"))
+	@echo "Unsealing Vault..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- vault operator unseal $(UNSEAL_KEY)
+	@echo "Vault unsealed."
+
+.PHONY: vault-enable-kv
+vault-enable-kv:
+	@test -f $(VAULT_INIT_FILE) || (echo "ERROR: $(VAULT_INIT_FILE) not found. Run make vault-init first."; exit 1)
+	$(eval ROOT_TOKEN := $(shell cat $(VAULT_INIT_FILE) | python3 -c "import sys,json; print(json.load(sys.stdin)['root_token'])"))
+	@echo "Enabling KV v2 secrets engine at path 'secrets' (mirrors SAP production mount name)..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) vault secrets enable -path=secrets kv-v2 || true
+	@echo "KV v2 enabled at 'secrets/'."
+
+# Creates a K8s Secret containing the Vault root token.
+# Used by the ESO ClusterSecretStore (eso/clusterstore.yaml) to authenticate to Vault.
+# IMPORTANT: regenerate this if the root token changes.
+.PHONY: vault-token-secret
+vault-token-secret:
+	@test -f $(VAULT_INIT_FILE) || (echo "ERROR: $(VAULT_INIT_FILE) not found. Run make vault-init first."; exit 1)
+	$(eval ROOT_TOKEN := $(shell cat $(VAULT_INIT_FILE) | python3 -c "import sys,json; print(json.load(sys.stdin)['root_token'])"))
+	@echo "Creating vault-token secret in $(VAULT_NAMESPACE) namespace for ESO..."
+	$(KC) kubectl create secret generic vault-token \
+		--from-literal=token="$(ROOT_TOKEN)" \
+		--namespace $(VAULT_NAMESPACE) \
+		--dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "Secret vault-token created in $(VAULT_NAMESPACE)."
+
+# vault-populate: writes all secrets to Vault using the SAME path structure as SAP production.
+# Production uses: vault+kvv2:///secrets/<region>/keystone/...
+# Local uses:      secrets/test/keystone/...  (mount=secrets, region=test)
+.PHONY: vault-populate
+vault-populate:
+	@test -f $(VAULT_INIT_FILE) || (echo "ERROR: $(VAULT_INIT_FILE) not found. Run make vault-init first."; exit 1)
+	$(eval ROOT_TOKEN     := $(shell cat $(VAULT_INIT_FILE) | python3 -c "import sys,json; print(json.load(sys.stdin)['root_token'])"))
+	@echo "Generating passwords (20 chars, no special chars)..."
+	$(eval ADMIN_PASS     := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	$(eval MARIADB_ROOT   := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	$(eval MARIADB_KS     := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	$(eval MARIADB_BACKUP_PASS := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	$(eval MARIADB_METIS_PASS  := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	$(eval RABBITMQ_PASS  := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	$(eval FERNET_0       := $(shell python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"))
+	$(eval FERNET_1       := $(shell python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"))
+	$(eval FERNET_2       := $(shell python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"))
+	$(eval CRED_0         := $(shell python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"))
+	$(eval CRED_1         := $(shell python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"))
+	$(eval CRYPTO_PASS    := $(shell openssl rand -base64 20 | tr -d '+/=' | cut -c1-20))
+	@echo "Writing secrets to Vault (mount: secrets, region: test)..."
+	@echo ""
+	@echo "  [1/9] Keystone admin password..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/keystone-user/admin \
+			password="$(ADMIN_PASS)"
+	@echo "  [2/9] MariaDB keystone user..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/mariadb-user/keystone \
+			password="$(MARIADB_KS)"
+	@echo "  [3/9] MariaDB root..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/mariadb-user/root \
+			password="$(MARIADB_ROOT)"
+	@echo "  [4/9] MariaDB backup user..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/mariadb-user/backup \
+			user="keystone-backup" \
+			password="$(MARIADB_BACKUP_PASS)"
+	@echo "  [5/9] MariaDB metis user..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/mariadb-user/metis \
+			username="keystone-metis" \
+			password="$(MARIADB_METIS_PASS)"
+	@echo "  [6/9] Fernet keys (3 keys for token encryption)..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/keystone-fernet-secrets/default \
+			0="$(FERNET_0)" \
+			1="$(FERNET_1)" \
+			2="$(FERNET_2)"
+	@echo "  [7/9] Credential encryption keys..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/keystone/keystone-credentials-secrets/default \
+			0="$(CRED_0)" \
+			1="$(CRED_1)"
+	@echo "  [8/9] RabbitMQ user for audit notifications (local, replaces Hermes)..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/hermes/rabbitmq-user/notifications-keystone \
+			username="keystone-notifications" \
+			password="$(RABBITMQ_PASS)"
+	@echo "  [9/9] RADIUS secret (stub — no real RADIUS server in test)..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) \
+		vault kv put secrets/test/shared/radius-auth/default \
+			secret="dummy-radius-secret"
+	@echo ""
+	@echo "All secrets written to Vault. Verify with: make vault-status"
+	@echo "Next: make vault-token-secret && make eso-apply-clusterstore"
+
+.PHONY: vault-status
+vault-status:
+	@echo "\n── Vault seal status ─────────────────────────────────────────────"
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- vault status 2>/dev/null || \
+		echo "NOTE: Vault may be sealed. Port-forward first: make vault-port-forward"
+	@echo "\n── Vault pod ─────────────────────────────────────────────────────"
+	$(KC) kubectl get pod vault-0 -n $(VAULT_NAMESPACE)
+	@echo "\n── Vault PVC ─────────────────────────────────────────────────────"
+	$(KC) kubectl get pvc -n $(VAULT_NAMESPACE)
+
+.PHONY: vault-port-forward
+vault-port-forward:
+	@echo "Vault UI: http://localhost:8200"
+	@test -f $(VAULT_INIT_FILE) && \
+		echo "Root token: $$(cat $(VAULT_INIT_FILE) | python3 -c "import sys,json; print(json.load(sys.stdin)['root_token'])")" || true
+	$(KC) kubectl port-forward svc/vault -n $(VAULT_NAMESPACE) 8200:8200
+
+.PHONY: vault-enable-k8s-auth
+vault-enable-k8s-auth:
+	@test -f $(VAULT_INIT_FILE) || (echo "ERROR: $(VAULT_INIT_FILE) not found."; exit 1)
+	$(eval ROOT_TOKEN := $(shell cat $(VAULT_INIT_FILE) | python3 -c "import sys,json; print(json.load(sys.stdin)['root_token'])"))
+	$(eval K8S_HOST   := $(shell $(KC) kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'))
+	@echo "Enabling Kubernetes auth method in Vault..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) vault auth enable kubernetes || true
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) vault write auth/kubernetes/config \
+			kubernetes_host="$(K8S_HOST)"
+	@echo "Creating Vault policy for External Secrets Operator..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) sh -c \
+		'printf "path \"secrets/data/test/*\" {\n  capabilities = [\"read\"]\n}\n" | vault policy write eso-sci-keystone -'
+	@echo "Creating Vault role for ESO service account..."
+	$(KC) kubectl exec vault-0 -n $(VAULT_NAMESPACE) -- \
+		env VAULT_TOKEN=$(ROOT_TOKEN) vault write auth/kubernetes/role/eso-sci-keystone \
+			bound_service_account_names="external-secrets" \
+			bound_service_account_namespaces="$(ESO_NAMESPACE)" \
+			policies="eso-sci-keystone" \
+			ttl=24h
+	@echo "Kubernetes auth enabled and configured for ESO."
+
+# ─── External Secrets Operator ────────────────────────────────────────────────
+# ESO is deployed by OCM via FluxDeployer (ocm/infra-ocm-deploy.yaml).
+# These targets configure ESO after its HelmRelease is Ready.
+
+.PHONY: eso-apply-clusterstore
+eso-apply-clusterstore:
+	@echo "Waiting for ESO webhook to be ready..."
+	$(KC) kubectl rollout status deployment/external-secrets-webhook \
+		-n $(ESO_NAMESPACE) --timeout=120s
+	@echo "Applying ClusterSecretStore (Vault backend)..."
+	$(KC) kubectl apply -f eso/clusterstore.yaml
+	@echo "\nClusterSecretStore status:"
+	$(KC) kubectl get clustersecretstore -A
+
+.PHONY: eso-apply-externalsecrets
+eso-apply-externalsecrets:
+	@echo "Applying ExternalSecret CRs..."
+	$(KC) kubectl apply -f eso/externalsecrets.yaml
+	@echo "\nWaiting for sync (up to 60s)..."
+	sleep 10
+	$(KC) kubectl get externalsecret -n $(NAMESPACE)
+
+.PHONY: eso-status
+eso-status:
+	@echo "\n── ClusterSecretStore ────────────────────────────────────────────"
+	$(KC) kubectl get clustersecretstore
+	@echo "\n── ExternalSecrets in $(NAMESPACE) ───────────────────────────────"
+	$(KC) kubectl get externalsecret -n $(NAMESPACE)
+	@echo "\n── K8s Secrets created by ESO ────────────────────────────────────"
+	$(KC) kubectl get secret -n $(NAMESPACE) -l \
+		'reconcile.external-secrets.io/created-by=external-secrets' 2>/dev/null || \
+		$(KC) kubectl get secret -n $(NAMESPACE) | grep -E "keystone-helm-values|rabbitmq-secrets"
+
+.PHONY: eso-refresh
+eso-refresh:
+	@echo "Forcing re-sync of all ExternalSecrets in $(NAMESPACE)..."
+	for es in keystone-helm-values rabbitmq-secrets; do \
+		$(KC) kubectl annotate externalsecret $$es -n $(NAMESPACE) \
+			force-sync="$$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite 2>/dev/null || true; \
+	done
+
+# ─── RabbitMQ (OCM-managed) ───────────────────────────────────────────────────
+# RabbitMQ is deployed by OCM via FluxDeployer (ocm/infra-ocm-deploy.yaml).
+# The chart wraps rabbitmq/chart/ (minimal Helm chart around the existing Deployment+Service).
+# Pods require rabbitmq-secrets K8s Secret; Flux self-heals once ESO creates it.
+
+.PHONY: rabbitmq-status
+rabbitmq-status:
+	$(KC) kubectl get pods,svc -n $(NAMESPACE) -l app=rabbitmq
+
+.PHONY: rabbitmq-port-forward
+rabbitmq-port-forward:
+	@echo "RabbitMQ Management UI: http://localhost:15672"
+	$(KC) kubectl port-forward svc/rabbitmq -n $(NAMESPACE) 15672:15672
+
+# ─── Chart Preparation ────────────────────────────────────────────────────────
+#
+# charts/ is a local build artifact directory (gitignored).
+# Flow per version (one-time):
+#   helm pull  ← Keppel (anonymous read, no auth needed)
+#   perl patch ← replace {{ .Chart.Version }} with | replace "+" "_"
+#   helm push  → ghcr.io/GITHUB_USER/charts
+#
+# OCM then fetches from ghcr.io during `ocm add componentversions` — no local tgz needed.
+# The patch is required because Flux OCI appends +<digest> to the chart version,
+# and Kubernetes rejects "+" in label values.
+
+# chart-prepare: pull/package and push all charts. Run once per version bump.
+.PHONY: chart-prepare
+chart-prepare: chart-prepare-vault chart-prepare-eso chart-prepare-rabbitmq chart-prepare-keystone chart-prepare-seeder
+	@echo "All charts prepared and pushed to ghcr.io/$(GITHUB_USER)/charts"
+
+# chart-prepare-vault: pull hashicorp/vault from public Helm repo, push to GHCR.
+.PHONY: chart-prepare-vault
+chart-prepare-vault:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Logging in to ghcr.io..."
+	echo $(GITHUB_TOKEN) | helm registry login ghcr.io --username $(GITHUB_USER) --password-stdin
+	@echo "Pulling hashicorp/vault $(VAULT_VERSION)..."
+	mkdir -p charts
+	helm repo add hashicorp https://helm.releases.hashicorp.com 2>/dev/null || true
+	helm repo update hashicorp
+	helm pull hashicorp/vault --version $(VAULT_VERSION) --destination charts/
+	@echo "Pushing vault chart to ghcr.io/$(GITHUB_USER)/charts..."
+	helm push charts/vault-$(VAULT_VERSION).tgz oci://ghcr.io/$(GITHUB_USER)/charts
+	@echo "vault-$(VAULT_VERSION) ready at ghcr.io/$(GITHUB_USER)/charts"
+
+# chart-prepare-eso: pull external-secrets from public Helm repo, push to GHCR.
+.PHONY: chart-prepare-eso
+chart-prepare-eso:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Logging in to ghcr.io..."
+	echo $(GITHUB_TOKEN) | helm registry login ghcr.io --username $(GITHUB_USER) --password-stdin
+	@echo "Pulling external-secrets $(ESO_VERSION)..."
+	mkdir -p charts
+	helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
+	helm repo update external-secrets
+	helm pull external-secrets/external-secrets --version $(ESO_VERSION) --destination charts/
+	@echo "Pushing external-secrets chart to ghcr.io/$(GITHUB_USER)/charts..."
+	helm push charts/external-secrets-$(ESO_VERSION).tgz oci://ghcr.io/$(GITHUB_USER)/charts
+	@echo "external-secrets-$(ESO_VERSION) ready at ghcr.io/$(GITHUB_USER)/charts"
+
+# chart-prepare-rabbitmq: package our minimal rabbitmq/chart/, push to GHCR.
+# No pull from external registry — chart is in-tree at rabbitmq/chart/.
+.PHONY: chart-prepare-rabbitmq
+chart-prepare-rabbitmq:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Logging in to ghcr.io..."
+	echo $(GITHUB_TOKEN) | helm registry login ghcr.io --username $(GITHUB_USER) --password-stdin
+	@echo "Packaging rabbitmq/chart/ → charts/rabbitmq-$(RABBITMQ_VERSION).tgz..."
+	mkdir -p charts
+	helm package rabbitmq/chart --version $(RABBITMQ_VERSION) --destination charts/
+	@echo "Pushing rabbitmq chart to ghcr.io/$(GITHUB_USER)/charts..."
+	helm push charts/rabbitmq-$(RABBITMQ_VERSION).tgz oci://ghcr.io/$(GITHUB_USER)/charts
+	@echo "rabbitmq-$(RABBITMQ_VERSION) ready at ghcr.io/$(GITHUB_USER)/charts"
+
+# chart-prepare-keystone: pull keystone from Keppel, patch labels, push to GHCR.
+.PHONY: chart-prepare-keystone
+chart-prepare-keystone:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Logging in to ghcr.io..."
+	echo $(GITHUB_TOKEN) | helm registry login ghcr.io --username $(GITHUB_USER) --password-stdin
+	@echo "Pulling keystone $(KEYSTONE_VERSION) from Keppel..."
+	mkdir -p charts
+	helm pull oci://$(KEPPEL_REGISTRY)/ccloud-helm/keystone \
+	  --version $(KEYSTONE_VERSION) \
+	  --destination charts/
+	@echo "Patching Chart.Version labels (+ → _) and integer map keys (Flux SSA fix)..."
+	@TMPDIR=$$(mktemp -d) && \
+	  tar -xzf charts/keystone-$(KEYSTONE_VERSION).tgz -C $$TMPDIR && \
+	  find $$TMPDIR/keystone/templates -name "*.yaml" | xargs \
+	    perl -pi -e \
+	      's/\{\{[ ]*\.Chart\.Version[ ]*\}\}/{{ .Chart.Version | replace "+" "_" }}/g; \
+	       s/(printf "%s-%s" \.Chart\.Name \.Chart\.Version)([ ]*)\}\}/$$1$$2| replace "+" "_" }}/g; \
+	       s/\{\{ \$$key \}\}:/"{{ \$$key }}":/g' && \
+	  perl -pi -e \
+	    's|(namespace: \{\{ .Release.Namespace \}\})|$$1\n{{- with .Values.imagePullSecrets }}\nimagePullSecrets:\n{{- range . }}\n  - name: {{ . }}\n{{- end }}\n{{- end }}|' \
+	    $$TMPDIR/keystone/templates/serviceaccount.yaml && \
+	  helm package $$TMPDIR/keystone --destination charts/ && \
+	  rm -rf $$TMPDIR && \
+	  echo "Patched: charts/keystone-$(KEYSTONE_VERSION).tgz"
+	@echo "Pushing patched keystone chart to ghcr.io/$(GITHUB_USER)/charts..."
+	helm push charts/keystone-$(KEYSTONE_VERSION).tgz oci://ghcr.io/$(GITHUB_USER)/charts
+	@echo "keystone-$(KEYSTONE_VERSION) ready at ghcr.io/$(GITHUB_USER)/charts"
+
+# chart-prepare-seeder: pull openstack-seeder from Keppel, patch labels, push to GHCR.
+.PHONY: chart-prepare-seeder
+chart-prepare-seeder:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Logging in to ghcr.io..."
+	echo $(GITHUB_TOKEN) | helm registry login ghcr.io --username $(GITHUB_USER) --password-stdin
+	@echo "Pulling openstack-seeder $(SEEDER_VERSION) from Keppel..."
+	mkdir -p charts
+	helm pull oci://$(KEPPEL_REGISTRY)/ccloud-helm/openstack-seeder \
+	  --version $(SEEDER_VERSION) \
+	  --destination charts/
+	@echo "Patching Chart.Version labels (+ → _)..."
+	@TMPDIR=$$(mktemp -d) && \
+	  tar -xzf charts/openstack-seeder-$(SEEDER_VERSION).tgz -C $$TMPDIR && \
+	  find $$TMPDIR/openstack-seeder/templates -name "*.yaml" | xargs \
+	    perl -pi -e \
+	      's/\{\{[ ]*\.Chart\.Version[ ]*\}\}/{{ .Chart.Version | replace "+" "_" }}/g; \
+	       s/(printf "%s-%s" \.Chart\.Name \.Chart\.Version)([ ]*)\}\}/$$1$$2| replace "+" "_" }}/g' && \
+	  helm package $$TMPDIR/openstack-seeder --destination charts/ && \
+	  rm -rf $$TMPDIR && \
+	  echo "Patched: charts/openstack-seeder-$(SEEDER_VERSION).tgz"
+	@echo "Pushing patched seeder chart to ghcr.io/$(GITHUB_USER)/charts..."
+	helm push charts/openstack-seeder-$(SEEDER_VERSION).tgz oci://ghcr.io/$(GITHUB_USER)/charts
+	@echo "openstack-seeder-$(SEEDER_VERSION) ready at ghcr.io/$(GITHUB_USER)/charts"
+
+.PHONY: ghcr-secret
+ghcr-secret:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	@echo "Creating ghcr-creds and local-registry-creds in monsoon3, vault, external-secrets, default..."
+	@for ns in $(NAMESPACE) $(VAULT_NAMESPACE) $(ESO_NAMESPACE) default; do \
+	  for name in ghcr-creds local-registry-creds; do \
+	    $(KC) kubectl create secret docker-registry $$name \
+	      --docker-server=ghcr.io \
+	      --docker-username=$(GITHUB_USER) \
+	      --docker-password=$(GITHUB_TOKEN) \
+	      --namespace $$ns \
+	      --dry-run=client -o yaml | $(KC) kubectl apply -f -; \
+	  done; \
+	done
+
+# patch-registry-sa: patch all ServiceAccounts (default + chart-created named SAs) in
+# workload namespaces to carry local-registry-creds as an imagePullSecret.
+# Kubernetes merges SA imagePullSecrets onto every pod, so all sub-chart deployments
+# (mariadb, memcached, seeder, etc.) pull from the private GHCR / RBSC registry
+# without needing explicit imagePullSecrets in every pod spec.
+# Run once after bootstrap, and again after charts deploy (named SAs don't exist until then).
+.PHONY: patch-registry-sa
+patch-registry-sa:
+	@echo "Patching ServiceAccounts with local-registry-creds imagePullSecret..."
+	@for ns in $(NAMESPACE) $(VAULT_NAMESPACE) $(ESO_NAMESPACE); do \
+	  for sa in $$($(KC) kubectl get serviceaccounts -n $$ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do \
+	    $(KC) kubectl patch serviceaccount $$sa -n $$ns \
+	      -p '{"imagePullSecrets":[{"name":"local-registry-creds"}]}' 2>/dev/null || true; \
+	  done; \
+	done
+	@echo "Done."
+# Full workflow:
+#   ocm-build → ocm-sign → ocm-push → ocm-deploy
+#   (or one-shot: ocm-fresh-push + ocm-deploy)
+#
+# Prerequisites (one-time per cluster):
+#   make ocm-signing-secret    — create public key secret in NAMESPACE
+#   make ocm-tls-cert-secret   — copy TLS cert from ocm-system to NAMESPACE
+
+# ocm-build: assemble the multi-component OCM CTF from component-constructor.yaml.
+# Charts must already exist in charts/ (run make chart-prepare first).
+.PHONY: ocm-build
+ocm-build:
+	rm -rf $(OCM_CTF)
+	KEYSTONE_VERSION=$(KEYSTONE_VERSION) SEEDER_VERSION=$(SEEDER_VERSION) \
+	  VAULT_VERSION=$(VAULT_VERSION) ESO_VERSION=$(ESO_VERSION) \
+	  RABBITMQ_VERSION=$(RABBITMQ_VERSION) PLATFORM_VERSION=$(PLATFORM_VERSION) \
+	  GITHUB_USER=$(GITHUB_USER) \
+	  KEYSTONE_IMAGE_TAG=$(KEYSTONE_IMAGE_TAG) \
+	  KEYSTONE_METRICS_IMAGE_TAG=$(KEYSTONE_METRICS_IMAGE_TAG) \
+	  PROXYSQL_IMAGE_TAG=$(PROXYSQL_IMAGE_TAG) \
+	  MARIADB_IMAGE_TAG=$(MARIADB_IMAGE_TAG) \
+	  MARIADB_POD_READINESS_TAG=$(MARIADB_POD_READINESS_TAG) \
+	  MARIADB_ALPINE_TAG=$(MARIADB_ALPINE_TAG) \
+	  MYSQLD_EXPORTER_TAG=$(MYSQLD_EXPORTER_TAG) \
+	  MEMCACHED_IMAGE_TAG=$(MEMCACHED_IMAGE_TAG) \
+	  MEMCACHED_EXPORTER_TAG=$(MEMCACHED_EXPORTER_TAG) \
+	  VAULT_IMAGE_TAG=$(VAULT_IMAGE_TAG) \
+	  VAULT_INJECTOR_TAG=$(VAULT_INJECTOR_TAG) \
+	  ESO_IMAGE_TAG=$(ESO_IMAGE_TAG) \
+	  RABBITMQ_IMAGE_TAG=$(RABBITMQ_IMAGE_TAG) \
+	  K8S_ENTRYPOINT_TAG=$(K8S_ENTRYPOINT_TAG) \
+	  SQL_EXPORTER_TAG=$(SQL_EXPORTER_TAG) \
+	  SEEDER_IMAGE_TAG=$(SEEDER_IMAGE_TAG) \
+	  ALPINE_KUBECTL_TAG=$(ALPINE_KUBECTL_TAG) \
+	  envsubst < component-constructor.yaml > .keystone-cc.yaml
+	TMPDIR=/tmp ocm add componentversions \
+	  --file $(OCM_CTF) \
+	  --create \
+	  .keystone-cc.yaml
+	rm -f .keystone-cc.yaml
+	@echo "CTF built at $(OCM_CTF). Run: make -f Makefile.scikeystone ocm-sign"
+
+# ocm-sign: sign umbrella component (keystone-platform) with --recursive.
+# --recursive follows componentReferences and signs all sub-components in one pass.
+# Must use jsonNormalisation/v3 — the OCM controller does NOT support v4alpha1.
+.PHONY: ocm-sign
+ocm-sign:
+	ocm sign componentversions \
+	  --repo ctf::$(OCM_CTF) \
+	  --signature $(SIGNING_NAME) \
+	  --private-key $(SIGNING_KEY) \
+	  --recursive \
+	  $(OCM_PLATFORM_COMPONENT)
+	@echo "All components signed. Run: make ocm-push"
+
+# ocm-push: transfer the signed CTF to ghcr.io.
+# --copy-resources is intentionally OMITTED here.
+# Images are pre-copied to GHCR at correct paths via `docker buildx imagetools create`
+# (see ocm-image-copy-* targets). Using --copy-resources on a local CTF → OCI registry
+# strips only the registry host from image refs, doubling the path namespace
+# (e.g. ghcr.io/org/repo/ccloud/img:tag → org/repo/ccloud/img:tag stored under org/repo/
+# → ghcr.io/org/repo/org/repo/ccloud/img:tag). The on-site operator runs
+# `ocm transfer componentversion --copy-resources oci://ghcr.io/... oci://rbsc.local/...`
+# which is registry-to-registry and correctly strips the full source registry prefix.
+.PHONY: ocm-push
+ocm-push:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	ocm \
+	  transfer ctf \
+	  --overwrite \
+	  $(OCM_CTF) \
+	  oci://$(OCM_REGISTRY)
+	@echo "Pushed to $(OCM_REGISTRY). Run: make ocm-deploy"
+
+# ocm-fresh-push: rebuild CTF, sign, and push in one step.
+.PHONY: ocm-fresh-push
+ocm-fresh-push: ocm-build ocm-sign ocm-push
+	@echo "ocm-fresh-push complete."
+
+# ocm-signing-secret: create the RSA public key secret on the cluster.
+# The ComponentVersion CR references this secret for signature verification.
+# Run once per cluster (or after rotating keys).
+.PHONY: ocm-signing-secret
+ocm-signing-secret:
+	$(KC) kubectl create secret generic keystone-signing-pubkey \
+	  --from-file=$(SIGNING_NAME)=$(SIGNING_PUBKEY) \
+	  --namespace $(NAMESPACE) \
+	  --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "keystone-signing-pubkey secret created in $(NAMESPACE)."
+
+# ocm-tls-cert-secret: copy ocm-registry-tls-certs from ocm-system to NAMESPACE.
+# FluxDeployer auto-sets certSecretRef on the OCIRepository it creates, pointing
+# to this secret in the target namespace — the OCIRepository pull will fail if it
+# doesn't exist there.
+.PHONY: ocm-tls-cert-secret
+ocm-tls-cert-secret:
+	@echo "Copying ocm-registry-tls-certs from ocm-system → $(NAMESPACE)..."
+	$(KC) kubectl get secret ocm-registry-tls-certs -n ocm-system -o json | \
+	  python3 -c "import sys,json; d=json.load(sys.stdin); \
+	    d['metadata']={'name':d['metadata']['name'],'namespace':'$(NAMESPACE)'}; \
+	    print(json.dumps(d))" | \
+	  $(KC) kubectl apply -f -
+	@echo "Done."
+
+# ocm-deploy: apply all OCM manifests (infra + keystone).
+# Vault, ESO, RabbitMQ, Keystone, and Seeder all start deploying concurrently.
+# After Vault is Ready: run vault-init vault-unseal vault-enable-kv vault-populate vault-token-secret
+# After ESO is Ready: run eso-apply-clusterstore eso-apply-externalsecrets
+# Then Flux self-heals RabbitMQ + Keystone once secrets are synced.
+.PHONY: ocm-deploy
+ocm-deploy:
+	$(KC) kubectl apply -f ocm/infra-ocm-deploy.yaml
+	$(KC) kubectl apply -f ocm/keystone-ocm-deploy.yaml
+	@echo "OCM manifests applied. Watch: make ocm-status"
+
+# ocm-status: show all OCM and Flux resources for all components.
+.PHONY: ocm-status
+ocm-status:
+	@echo "\n── ComponentVersions ─────────────────────────────────────────────"
+	$(KC) kubectl get componentversion -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── Resources ─────────────────────────────────────────────────────"
+	$(KC) kubectl get resource.delivery.ocm.software -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── FluxDeployers ─────────────────────────────────────────────────"
+	$(KC) kubectl get fluxdeployer -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── OCIRepositories ───────────────────────────────────────────────"
+	$(KC) kubectl get ocirepository -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── HelmReleases ──────────────────────────────────────────────────"
+	$(KC) kubectl get helmrelease -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── Vault pod ─────────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(VAULT_NAMESPACE) 2>/dev/null | grep -v "^$" || echo "(none)"
+	@echo "\n── ESO pods ──────────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(ESO_NAMESPACE) 2>/dev/null | grep -v "^$" || echo "(none)"
+	@echo "\n── Pods (monsoon3) ───────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(NAMESPACE) 2>/dev/null | grep -v "keep-image" || true
+
+# ocm-fresh-install: recover from a stuck HelmRelease.
+# Clears Helm history secrets + stuck jobs, restarts helm-controller, re-applies manifests.
+# Use when HelmRelease is stuck in a terminal error state after a failed install/upgrade.
+.PHONY: ocm-fresh-install
+ocm-fresh-install:
+	@echo "Clearing Helm history for keystone in $(NAMESPACE)..."
+	$(KC) kubectl delete secret -n $(NAMESPACE) -l owner=helm,name=keystone --ignore-not-found
+	@echo "Deleting lingering Keystone jobs and pods..."
+	$(KC) kubectl delete jobs -n $(NAMESPACE) -l application=keystone --ignore-not-found 2>/dev/null || true
+	$(KC) kubectl delete pods  -n $(NAMESPACE) -l application=keystone --ignore-not-found 2>/dev/null || true
+	@echo "Restarting helm-controller (clears any frozen goroutine)..."
+	$(KC) kubectl rollout restart deploy/helm-controller -n $(FLUX_SYSTEM_NS)
+	$(KC) kubectl rollout status deploy/helm-controller -n $(FLUX_SYSTEM_NS) --timeout=60s
+	$(KC) kubectl apply -f ocm/infra-ocm-deploy.yaml
+	$(KC) kubectl apply -f ocm/keystone-ocm-deploy.yaml
+	@echo "Done. Watch: make ocm-status"
+
+# ─── Flux (status + recovery) ─────────────────────────────────────────────────
+
+.PHONY: flux-status
+flux-status:
+	@echo "\n── OCIRepositories ───────────────────────────────────────────────"
+	$(KC) kubectl get ocirepository -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── HelmReleases ──────────────────────────────────────────────────"
+	$(KC) kubectl get helmrelease -n $(NAMESPACE)
+	@echo "\n── Flux system pods ──────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(FLUX_SYSTEM_NS)
+
+.PHONY: flux-watch
+flux-watch:
+	$(KC) kubectl get helmrelease -n $(NAMESPACE) -w
+
+.PHONY: flux-reconcile
+flux-reconcile:
+	@echo "Forcing reconciliation of keystone HelmRelease in $(NAMESPACE)..."
+	$(KC) kubectl annotate helmrelease keystone -n $(NAMESPACE) \
+		reconcile.fluxcd.io/requestedAt="$$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+
+# flux-restart-controller: restart the helm-controller to unblock a frozen goroutine.
+# Symptom: HelmRelease stuck in "Running 'install/upgrade' action" past its timeout.
+.PHONY: flux-restart-controller
+flux-restart-controller:
+	$(KC) kubectl rollout restart deploy/helm-controller -n $(FLUX_SYSTEM_NS)
+	$(KC) kubectl rollout status deploy/helm-controller -n $(FLUX_SYSTEM_NS) --timeout=60s
+
+.PHONY: flux-fix
+flux-fix:
+	@test -n "$(APP)" || (echo "Usage: make flux-fix APP=<helmrelease-name>"; exit 1)
+	@echo "Recovering stuck $(APP) HelmRelease..."
+	$(KC) kubectl patch helmrelease $(APP) -n $(NAMESPACE) \
+		-p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+	$(KC) kubectl delete helmrelease $(APP) -n $(NAMESPACE) --wait=false --ignore-not-found
+	$(KC) kubectl delete secret -n $(NAMESPACE) -l owner=helm,name=$(APP) --ignore-not-found
+	$(KC) kubectl delete job -n $(NAMESPACE) -l application=$(APP) --ignore-not-found 2>/dev/null || true
+	$(KC) kubectl rollout restart deploy/helm-controller -n $(FLUX_SYSTEM_NS)
+	$(KC) kubectl rollout status deploy/helm-controller -n $(FLUX_SYSTEM_NS) --timeout=60s
+	$(KC) kubectl apply -f ocm/infra-ocm-deploy.yaml
+	$(KC) kubectl apply -f ocm/keystone-ocm-deploy.yaml
+	@echo "Done. Watch with: make ocm-status"
+
+# ─── Stub CRDs ────────────────────────────────────────────────────────────────
+
+.PHONY: crds-apply
+crds-apply:
+	@echo "Applying stub CRDs and PriorityClasses..."
+	$(KC) kubectl apply -f crds/priority-classes.yaml
+	$(KC) kubectl apply -f crds/openstackseed-crd.yaml
+	$(KC) kubectl apply -f crds/stub-sentryproject-crd.yaml
+	$(KC) kubectl apply -f crds/stub-prometheusrule-crd.yaml
+	@echo "CRDs applied."
+
+# ─── CoreDNS (SAP DNS workaround) ─────────────────────────────────────────────
+# The SAP keystone chart uses ProxySQL in host_alias mode. ProxySQL resolves
+# MariaDB as: {release}-mariadb.{namespace}.svc.kubernetes.{region}.{tld}
+# e.g.: keystone-mariadb.monsoon3.svc.kubernetes.test.cloud.sap
+#
+# Gardener shoot clusters use cluster.local, not svc.kubernetes.<region>.<tld>.
+# Fix: patch coredns-custom ConfigMap to rewrite both the DNS question name
+# (cluster.local lookup) and the answer name (so glibc accepts the response).
+#
+# WHY answer name rewrite is required:
+#   glibc getaddrinfo() discards answers where the answer-section name does not
+#   match the question name (returns EAI_NONAME). A question-only rewrite makes
+#   nslookup appear to succeed (nslookup is lenient) while ProxySQL still fails.
+#   Do NOT rely on nslookup alone to verify this — use make coredns-verify.
+
+.PHONY: coredns-rewrite
+coredns-rewrite:
+	@echo "Patching coredns-custom with SAP DNS rewrite ($(REGION).$(TLD) → cluster.local)..."
+	$(KC) kubectl patch configmap coredns-custom -n kube-system --type merge -p \
+	  '{"data":{"sap-dns.override":"rewrite stop {\n  name regex (.+)\\.svc\\.kubernetes\\.$(REGION)\\.$(subst .,\\.,$(TLD)) {1}.svc.cluster.local\n  answer name (.+)\\.svc\\.cluster\\.local {1}.svc.kubernetes.$(REGION).$(TLD)\n}\n"}}'
+	@echo "Restarting CoreDNS to load updated config..."
+	$(KC) kubectl rollout restart deployment coredns -n kube-system
+	$(KC) kubectl rollout status deployment coredns -n kube-system --timeout=180s
+	@echo "CoreDNS rewrite applied. Verify with: make coredns-verify"
+
+.PHONY: coredns-verify
+coredns-verify:
+	@echo "Testing SAP DNS rewrite: keystone-mariadb.$(NAMESPACE).svc.kubernetes.$(REGION).$(TLD)"
+	@echo "Expected: TCP connects (wget: Connection reset by peer) — not 'bad address'"
+	$(KC) kubectl run dns-verify-$$(date +%s) --rm --restart=Never \
+	  --image=busybox -n $(NAMESPACE) --timeout=60s \
+	  -- sh -c 'nslookup keystone-mariadb.$(NAMESPACE).svc.kubernetes.$(REGION).$(TLD) && \
+	    wget -O- --timeout=5 \
+	    http://keystone-mariadb.$(NAMESPACE).svc.kubernetes.$(REGION).$(TLD):3306 2>&1 | head -3; \
+	    echo "(done)"'
+
+# ─── Troubleshooting ──────────────────────────────────────────────────────────
+
+# fix-immutable-roles: run once after the first successful Keystone bootstrap,
+# before deploying openstack-seeder. Keystone's 'epoxy' bootstrap marks the
+# built-in roles (admin, member, reader, service, manager) as immutable.
+# The seeder tries to update their descriptions and gets HTTP 403.
+.PHONY: fix-immutable-roles
+fix-immutable-roles:
+	@echo "Unsetting immutable flag on Keystone bootstrap roles."
+	@echo "Requires 'make keystone-port-forward' running in another terminal."
+	@ADMIN_PASS=$$($(KC) kubectl get secret keystone-helm-values -n $(NAMESPACE) \
+	  -o jsonpath='{.data.values\.yaml}' | base64 -d | \
+	  grep 'adminPassword:' | awk '{print $$2}' | tr -d '"') && \
+	TOKEN=$$(curl -sf \
+	  -H 'Content-Type: application/json' \
+	  -d "{\"auth\":{\"identity\":{\"methods\":[\"password\"],\"password\":{\"user\":{\"name\":\"admin\",\"domain\":{\"id\":\"default\"},\"password\":\"$$ADMIN_PASS\"}}},\"scope\":{\"project\":{\"name\":\"admin\",\"domain\":{\"id\":\"default\"}}}}}" \
+	  -D /tmp/ks-tok-headers.txt \
+	  http://localhost:5000/v3/auth/tokens > /dev/null && \
+	  grep -i '^x-subject-token' /tmp/ks-tok-headers.txt | awk '{print $$2}' | tr -d '\r\n') && \
+	test -n "$$TOKEN" || { echo "ERROR: failed to get token — is keystone-port-forward running?"; exit 1; } && \
+	echo "Token obtained. Scanning for immutable roles..." && \
+	curl -s http://localhost:5000/v3/roles -H "X-Auth-Token: $$TOKEN" | \
+	TOKEN="$$TOKEN" python3 -c \
+	  "import json,sys,os,urllib.request as U; t=os.environ['TOKEN']; \
+	  [(print('  unsetting: '+r['name']),U.urlopen(U.Request( \
+	    'http://localhost:5000/v3/roles/'+r['id'], \
+	    data=b'{\"role\":{\"options\":{\"immutable\":false}}}', \
+	    headers={'X-Auth-Token':t,'Content-Type':'application/json'}, \
+	    method='PATCH'))) \
+	  for r in json.load(sys.stdin).get('roles',[]) \
+	  if r.get('options',{}).get('immutable')]" && \
+	echo "Done. Run 'make seeder-restart' to trigger a fresh seeder attempt."
+
+# ─── openstack-seeder ─────────────────────────────────────────────────────────
+# The seeder is now fully OCM-managed — deployed via the FluxDeployer in
+# ocm/keystone-ocm-deploy.yaml. Run 'make ocm-deploy' to deploy it alongside
+# Keystone. No direct helm install needed.
+
+# seeder-helm-deploy: DEPRECATED — kept for reference only.
+# The seeder is now bundled in the OCM component and deployed via FluxDeployer.
+# Use 'make ocm-deploy' instead.
+.PHONY: seeder-helm-deploy
+seeder-helm-deploy:
+	@echo "WARNING: seeder-helm-deploy is deprecated."
+	@echo "The seeder is now OCM-managed. Run 'make ocm-deploy' instead."
+	@echo "If you need to force a direct helm install (recovery only), run:"
+	@echo "  helm upgrade --install openstack-seeder oci://keppel.eu-nl-1.cloud.sap/ccloud-helm/openstack-seeder \\"
+	@echo "    --version 0.1.0 --namespace $(NAMESPACE) -f seeder/seeder-values.yaml"
+
+.PHONY: seeder-status
+seeder-status:
+	@echo "\n── openstack-seeder pod ──────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(NAMESPACE) -l name=openstack-seeder
+	@echo "\n── OpenstackSeed CRDs ────────────────────────────────────────────"
+	$(KC) kubectl get openstackseeds -n $(NAMESPACE) 2>/dev/null || \
+		echo "No OpenstackSeed objects found (CRD may not be installed yet)"
+
+.PHONY: seeder-logs
+seeder-logs:
+	$(KC) kubectl logs -n $(NAMESPACE) -l name=openstack-seeder --tail=100
+
+.PHONY: seeder-restart
+seeder-restart:
+	@echo "Restarting openstack-seeder pod (triggers retry)..."
+	$(KC) kubectl rollout restart deploy/openstack-seeder -n $(NAMESPACE)
+
+# ─── Domain seeding ───────────────────────────────────────────────────────────
+
+.PHONY: seed-domains
+seed-domains:
+	@echo "Applying domain OpenstackSeed CRs..."
+	$(KC) kubectl apply -f seeder/domain-seeds.yaml
+	@echo "Domain seeds applied."
+
+.PHONY: seed-status
+seed-status:
+	@echo "\n── All OpenstackSeed objects ─────────────────────────────────────"
+	$(KC) kubectl get openstackseeds -A 2>/dev/null || echo "No OpenstackSeed CRD found"
+
+# ─── Keystone verification ────────────────────────────────────────────────────
+
+.PHONY: keystone-port-forward
+keystone-port-forward:
+	@echo "Keystone API: http://localhost:5000/v3"
+	$(KC) kubectl port-forward svc/keystone -n $(NAMESPACE) 5000:5000
+
+.PHONY: get-cloudadmin-project-id
+get-cloudadmin-project-id:
+	@echo "Getting cloud_admin project ID from ccadmin domain..."
+	@echo "Prerequisites: export OS_* env vars for ccadmin domain"
+	@echo "Run in a separate terminal after: make keystone-port-forward"
+	openstack project list --domain ccadmin 2>/dev/null || \
+		echo "ERROR: Set OpenStack env vars first (OS_AUTH_URL=http://localhost:5000/v3 etc.)"
+
+.PHONY: keystone-verify
+keystone-verify:
+	@echo "── Keystone version endpoint ─────────────────────────────────────"
+	@curl -s http://localhost:5000/v3 | python3 -m json.tool | grep '"status"'
+	@echo ""
+	@echo "── Issuing admin token ───────────────────────────────────────────"
+	$(eval ADMIN_PASS := $(shell $(KC) kubectl get secret keystone-helm-values -n $(NAMESPACE) \
+	  -o jsonpath='{.data.values\.yaml}' | base64 -d | grep 'adminPassword:' | awk '{print $$2}' | tr -d '"'))
+	@TOKEN=$$(curl -si \
+	  -H 'Content-Type: application/json' \
+	  -d "{\"auth\":{\"identity\":{\"methods\":[\"password\"],\"password\":{\"user\":{\"name\":\"admin\",\"domain\":{\"id\":\"default\"},\"password\":\"$(ADMIN_PASS)\"}}},\"scope\":{\"project\":{\"name\":\"admin\",\"domain\":{\"id\":\"default\"}}}}}" \
+	  http://localhost:5000/v3/auth/tokens 2>&1 | grep -i 'x-subject-token' | awk '{print $$2}' | tr -d '\r\n') && \
+	test -n "$$TOKEN" || { echo "ERROR: failed to get token"; exit 1; } && \
+	echo "Token: $$TOKEN" && \
+	echo "" && \
+	echo "── Domains ───────────────────────────────────────────────────────" && \
+	curl -s http://localhost:5000/v3/domains -H "X-Auth-Token: $$TOKEN" | python3 -m json.tool | grep '"name"'
+
+# ─── Status ───────────────────────────────────────────────────────────────────
+
+.PHONY: status
+status:
+	@echo "\n── Vault ─────────────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(VAULT_NAMESPACE)
+	@echo "\n── External Secrets Operator ─────────────────────────────────────"
+	$(KC) kubectl get pods -n $(ESO_NAMESPACE)
+	$(KC) kubectl get externalsecret -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── OCM resources ─────────────────────────────────────────────────"
+	$(KC) kubectl get componentversion,resource.delivery.ocm.software,fluxdeployer \
+		-n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── OCIRepository / HelmRelease ───────────────────────────────────"
+	$(KC) kubectl get ocirepository,helmrelease -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── Pods ($(NAMESPACE)) ────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(NAMESPACE)
+	@echo "\n── PVCs ($(NAMESPACE)) ────────────────────────────────────────────"
+	$(KC) kubectl get pvc -n $(NAMESPACE)
+	@echo "\n── Services ($(NAMESPACE)) ────────────────────────────────────────"
+	$(KC) kubectl get svc -n $(NAMESPACE)
+
+.PHONY: logs-keystone
+logs-keystone:
+	$(KC) kubectl logs -n $(NAMESPACE) -l name=keystone-api --tail=50
+
+.PHONY: logs-seeder
+logs-seeder:
+	$(KC) kubectl logs -n $(NAMESPACE) -l app=openstack-seeder --tail=50
+
+# ─── Cleanup ──────────────────────────────────────────────────────────────────
+
+.PHONY: uninstall-keystone
+uninstall-keystone:
+	@echo "Removing Keystone OCM + Flux resources from $(NAMESPACE)..."
+	$(KC) kubectl delete fluxdeployer keystone -n $(NAMESPACE) --ignore-not-found
+	$(KC) kubectl delete resource.delivery.ocm.software keystone-chart -n $(NAMESPACE) --ignore-not-found
+	$(KC) kubectl delete componentversion keystone -n $(NAMESPACE) --ignore-not-found
+	$(KC) kubectl delete helmrelease keystone -n $(NAMESPACE) --ignore-not-found
+	$(KC) kubectl delete ocirepository -n $(NAMESPACE) --all --ignore-not-found 2>/dev/null || true
+	@echo "Done. Helm release and pods will be cleaned up by Flux."
+
+.PHONY: uninstall-all
+uninstall-all:
+	@echo "Removing all OCM resources from $(NAMESPACE)..."
+	$(KC) kubectl delete fluxdeployer,resource.delivery.ocm.software,componentversion \
+		--all -n $(NAMESPACE) --ignore-not-found 2>/dev/null || true
+	@echo "Removing HelmReleases from $(NAMESPACE)..."
+	$(KC) kubectl delete helmrelease --all -n $(NAMESPACE) --ignore-not-found
+	@echo "Removing ExternalSecrets..."
+	$(KC) kubectl delete externalsecret --all -n $(NAMESPACE) --ignore-not-found
+	@echo "Removing PVCs..."
+	$(KC) kubectl delete pvc --all -n $(NAMESPACE) --ignore-not-found
+	@echo "Removing namespaces..."
+	$(KC) kubectl delete namespace $(NAMESPACE) --ignore-not-found
+	@echo "Removing Vault (HelmRelease + namespace)..."
+	$(KC) kubectl delete helmrelease vault -n $(NAMESPACE) --ignore-not-found 2>/dev/null || true
+	$(KC) kubectl delete namespace $(VAULT_NAMESPACE) --ignore-not-found
+	@echo "Removing ESO (HelmRelease + namespace)..."
+	$(KC) kubectl delete helmrelease external-secrets -n $(NAMESPACE) --ignore-not-found 2>/dev/null || true
+	$(KC) kubectl delete namespace $(ESO_NAMESPACE) --ignore-not-found
+	@echo "Cleanup complete."
+
+# ─── Greenhouse-pattern OCM (new architecture) ────────────────────────────────
+#
+# Mirrors ocm-greenhouse/Makefile.ocm.
+# Uses new OCM k8s toolkit v0.21.0 API (Repository/Component/Resource/OCIRepository/HelmRelease)
+# instead of old FluxDeployer-based pattern.
+#
+# Workflow:
+#   make build-keystone    → assemble keystone OCM bundle (CTF) from ocm/keystone-component.yaml
+#   make push-keystone     → transfer CTF + all images to ghcr.io with --copy-resources
+#   make verify-keystone   → confirm component versions are accessible in registry
+#   make sign-sigstore-keystone → keyless Sigstore sign (requires GitHub OIDC or SPIFFE)
+#
+#   make build-prerequisites / push-prerequisites / verify-prerequisites / sign-sigstore-prerequisites  (vault+eso+rabbitmq)
+#
+#   make deploy-apply              → kubectl apply -k ocm/deploy/ (RGDs + namespace)
+#   make deploy-instance-keystone  → apply KeystoneStack CR (after kro processes RGD)
+#   make deploy-instance-infra     → apply InfraStack CR
+#   make deploy-full               → deploy-apply + both instances (in order)
+#
+# Prerequisites: ocm CLI (>= v0.48.0), cosign, Helm, kubectl
+# Version pins live in versions.env — source it or export vars before running.
+
+INFRA_VERSION       ?= 1.0.0
+KEYSTONE_BUNDLE       ?= keystone-bundle.ctf
+PREREQUISITES_BUNDLE  ?= prerequisites-bundle.ctf
+SIG_NAME              ?= keystone-release
+SIG_ALGORITHM         ?= sigstore-v2
+KEYSTONE_OCM_REGISTRY    ?= ghcr.io/$(GITHUB_USER)/keystone
+PREREQUISITES_OCM_REGISTRY ?= ghcr.io/$(GITHUB_USER)/keystone-prerequisites
+
+# ── Build ──────────────────────────────────────────────────────────────────────
+
+# build-keystone: assemble keystone + seeder charts into a CTF using proper OCM variable substitution.
+# Charts must exist in charts/: run `make chart-prepare-keystone chart-prepare-seeder` first.
+.PHONY: build-keystone
+build-keystone:
+	rm -rf $(KEYSTONE_BUNDLE)
+	TMPDIR=/tmp ocm add componentversions \
+	  --addenv \
+	  --file $(KEYSTONE_BUNDLE) \
+	  --create \
+	  ocm/keystone-component.yaml \
+	  KEYSTONE_VERSION=$(KEYSTONE_VERSION) \
+	  SEEDER_VERSION=$(SEEDER_VERSION) \
+	  KEYSTONE_IMAGE_TAG=$(KEYSTONE_IMAGE_TAG) \
+	  KEYSTONE_METRICS_IMAGE_TAG=$(KEYSTONE_METRICS_IMAGE_TAG) \
+	  PROXYSQL_IMAGE_TAG=$(PROXYSQL_IMAGE_TAG) \
+	  MARIADB_IMAGE_TAG=$(MARIADB_IMAGE_TAG) \
+	  MARIADB_POD_READINESS_TAG=$(MARIADB_POD_READINESS_TAG) \
+	  MARIADB_ALPINE_TAG=$(MARIADB_ALPINE_TAG) \
+	  MYSQLD_EXPORTER_TAG=$(MYSQLD_EXPORTER_TAG) \
+	  MEMCACHED_IMAGE_TAG=$(MEMCACHED_IMAGE_TAG) \
+	  MEMCACHED_EXPORTER_TAG=$(MEMCACHED_EXPORTER_TAG) \
+	  K8S_ENTRYPOINT_TAG=$(K8S_ENTRYPOINT_TAG) \
+	  SQL_EXPORTER_TAG=$(SQL_EXPORTER_TAG) \
+	  SEEDER_IMAGE_TAG=$(SEEDER_IMAGE_TAG) \
+	  ALPINE_KUBECTL_TAG=$(ALPINE_KUBECTL_TAG) \
+	  APACHE_EXPORTER_TAG=$(APACHE_EXPORTER_TAG)
+	@echo "Keystone bundle built at $(KEYSTONE_BUNDLE). Run: make push-keystone"
+
+# build-prerequisites: assemble vault + eso + rabbitmq charts into a CTF.
+# Charts must exist in charts/: run `make chart-prepare-vault chart-prepare-eso chart-prepare-rabbitmq` first.
+.PHONY: build-prerequisites
+build-prerequisites:
+	rm -rf $(PREREQUISITES_BUNDLE)
+	TMPDIR=/tmp ocm add componentversions \
+	  --addenv \
+	  --file $(PREREQUISITES_BUNDLE) \
+	  --create \
+	  ocm/infra-component.yaml \
+	  VAULT_VERSION=$(VAULT_VERSION) \
+	  ESO_VERSION=$(ESO_VERSION) \
+	  RABBITMQ_VERSION=$(RABBITMQ_VERSION) \
+	  INFRA_VERSION=$(INFRA_VERSION) \
+	  VAULT_IMAGE_TAG=$(VAULT_IMAGE_TAG) \
+	  VAULT_INJECTOR_TAG=$(VAULT_INJECTOR_TAG) \
+	  ESO_IMAGE_TAG=$(ESO_IMAGE_TAG) \
+	  RABBITMQ_IMAGE_TAG=$(RABBITMQ_IMAGE_TAG)
+	@echo "Prerequisites bundle built at $(PREREQUISITES_BUNDLE). Run: make push-prerequisites"
+
+# ── Push ───────────────────────────────────────────────────────────────────────
+
+# push-keystone: transfer CTF + copy all referenced images to ghcr.io.
+# --copy-resources copies images from Keppel/GHCR to the target registry preserving the source path.
+.PHONY: push-keystone
+push-keystone:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	GITHUB_TOKEN=$(GITHUB_TOKEN) ocm transfer ctf \
+	  --overwrite \
+	  --copy-resources \
+	  $(KEYSTONE_BUNDLE) \
+	  oci://$(KEYSTONE_OCM_REGISTRY)
+	@echo "Keystone bundle pushed to $(KEYSTONE_OCM_REGISTRY). Run: make verify-keystone"
+
+.PHONY: push-prerequisites
+push-prerequisites:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN env var not set"; exit 1)
+	GITHUB_TOKEN=$(GITHUB_TOKEN) ocm transfer ctf \
+	  --overwrite \
+	  --copy-resources \
+	  $(PREREQUISITES_BUNDLE) \
+	  oci://$(PREREQUISITES_OCM_REGISTRY)
+	@echo "Prerequisites bundle pushed to $(PREREQUISITES_OCM_REGISTRY). Run: make verify-prerequisites"
+
+# ── Verify ─────────────────────────────────────────────────────────────────────
+
+.PHONY: verify-keystone
+verify-keystone:
+	ocm get componentversion \
+	  --repo oci://$(KEYSTONE_OCM_REGISTRY) \
+	  ocm.software/sap/keystone:$(KEYSTONE_VERSION)
+	ocm get componentversion \
+	  --repo oci://$(KEYSTONE_OCM_REGISTRY) \
+	  ocm.software/sap/keystone/core:$(KEYSTONE_VERSION)
+
+.PHONY: verify-prerequisites
+verify-prerequisites:
+	ocm get componentversion \
+	  --repo oci://$(PREREQUISITES_OCM_REGISTRY) \
+	  ocm.software/sap/keystone/infra:$(INFRA_VERSION)
+	ocm get componentversion \
+	  --repo oci://$(PREREQUISITES_OCM_REGISTRY) \
+	  ocm.software/sap/keystone/infra/vault:$(VAULT_VERSION)
+
+# ── Sign (keyless Sigstore) ────────────────────────────────────────────────────
+# Requires: GitHub Actions OIDC (id-token: write) or cosign SPIFFE identity.
+# For local signing: `cosign login ghcr.io` then run this target.
+
+.PHONY: sign-sigstore-keystone
+sign-sigstore-keystone:
+	ocm sign componentversions \
+	  --keyless \
+	  --signature $(SIG_NAME) \
+	  --algorithm $(SIG_ALGORITHM) \
+	  --repo oci://$(KEYSTONE_OCM_REGISTRY) \
+	  ocm.software/sap/keystone:$(KEYSTONE_VERSION)
+	@echo "Keystone component signed with keyless Sigstore."
+
+.PHONY: sign-sigstore-prerequisites
+sign-sigstore-prerequisites:
+	ocm sign componentversions \
+	  --keyless \
+	  --signature $(SIG_NAME) \
+	  --algorithm $(SIG_ALGORITHM) \
+	  --repo oci://$(PREREQUISITES_OCM_REGISTRY) \
+	  ocm.software/sap/keystone/infra:$(INFRA_VERSION)
+	@echo "Prerequisites component signed with keyless Sigstore."
+
+# ── Deploy ─────────────────────────────────────────────────────────────────────
+
+# deploy-apply: install the kro RGDs and monsoon3 namespace.
+# kro processes the RGDs and creates KeystoneStack + InfraStack CRDs.
+.PHONY: deploy-apply
+deploy-apply:
+	$(KC) kubectl apply -k ocm/deploy/
+	@echo "RGDs applied. Wait for kro to register CRDs, then run: make deploy-instance-keystone deploy-instance-infra"
+
+# deploy-instance-keystone: apply the KeystoneStack CR that drives the full keystone deployment.
+.PHONY: deploy-instance-keystone
+deploy-instance-keystone:
+	@echo "Waiting for KeystoneStack CRD to be established..."
+	$(KC) kubectl wait --for=condition=established crd/keystonestacks.kro.run --timeout=120s || \
+	  (echo "KeystoneStack CRD not yet available — is the RGD applied and kro running?"; exit 1)
+	$(KC) kubectl apply -f ocm/deploy/keystone-instance.yaml
+	@echo "KeystoneStack instance applied. Watch: make ocm-status-new"
+
+# deploy-instance-infra: apply the InfraStack CR that drives vault + eso + rabbitmq.
+.PHONY: deploy-instance-infra
+deploy-instance-infra:
+	@echo "Waiting for InfraStack CRD to be established..."
+	$(KC) kubectl wait --for=condition=established crd/infrastacks.kro.run --timeout=120s || \
+	  (echo "InfraStack CRD not yet available — is the RGD applied and kro running?"; exit 1)
+	$(KC) kubectl apply -f ocm/deploy/infra-instance.yaml
+	@echo "InfraStack instance applied. Watch: make ocm-status-new"
+
+# deploy-full: apply RGDs, wait for CRDs, deploy both instances.
+.PHONY: deploy-full
+deploy-full: deploy-apply
+	@echo "Waiting for kro to register CRDs (up to 60s)..."
+	sleep 10
+	$(KC) kubectl wait --for=condition=established crd/keystonestacks.kro.run --timeout=120s
+	$(KC) kubectl wait --for=condition=established crd/infrastacks.kro.run --timeout=120s
+	$(KC) kubectl apply -f ocm/deploy/keystone-instance.yaml
+	$(KC) kubectl apply -f ocm/deploy/infra-instance.yaml
+	@echo "deploy-full complete. Watch: make ocm-status-new"
+
+# ocm-controller-install-v2: install OCM k8s toolkit (new API) via the greenhouse bootstrap flow.
+#
+# The OCM k8s toolkit chart has no versioned OCI tags — it is only accessible via the
+# prerequisites OCM bundle pushed by CI. This target:
+#   1. Creates the greenhouse namespace + GHCR pull secret
+#   2. Creates helm-controller cluster-admin ClusterRoleBinding (needed for CRD installs)
+#   3. Applies ocm-greenhouse/deploy/bootstrap-rgd.yaml (registers GreenhouseBootstrap CRD)
+#   4. Waits for the CRD to be ready
+#   5. Applies ocm/deploy/bootstrap-instance-keystone.yaml
+#   6. Annotates OCIRepository to trigger immediate reconciliation (skip 10m wait)
+#   7. Waits for the OCM controller HelmRelease to become Ready
+#
+# Prerequisites: GITHUB_TOKEN env var, Flux + kro already installed on the shoot cluster.
+# The prerequisites bundle must already be at ghcr.io/$(GITHUB_USER)/prerequisites.
+BOOTSTRAP_NS         ?= greenhouse
+PREREQUISITES_REGISTRY ?= ghcr.io/$(GITHUB_USER)/prerequisites
+
+.PHONY: ocm-controller-install-v2
+ocm-controller-install-v2:
+	@echo "── Step 1: create $(BOOTSTRAP_NS) namespace ──────────────────────────────────"
+	$(KC) kubectl create namespace $(BOOTSTRAP_NS) --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "── Step 2: create GHCR pull secret in $(BOOTSTRAP_NS) ───────────────────────"
+	$(KC) kubectl create secret docker-registry ghcr-bootstrap-creds \
+	  --docker-server=ghcr.io \
+	  --docker-username=$(GITHUB_USER) \
+	  --docker-password=$(GITHUB_TOKEN) \
+	  --namespace $(BOOTSTRAP_NS) \
+	  --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "── Step 3: grant helm-controller cluster-admin (needed for cluster-scoped CRDs) ─"
+	$(KC) kubectl create clusterrolebinding helm-controller-cluster-admin \
+	  --clusterrole=cluster-admin \
+	  --serviceaccount=flux-system:helm-controller \
+	  --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "── Step 4: apply bootstrap RGD (registers GreenhouseBootstrap CRD) ──────────"
+	$(KC) kubectl apply -f ocm-greenhouse/deploy/bootstrap-rgd.yaml
+	@echo "── Step 5: wait for greenhousebootstraps.kro.run CRD ────────────────────────"
+	@until $(KC) kubectl get crd greenhousebootstraps.kro.run >/dev/null 2>&1; do \
+	  echo "  waiting for CRD..."; sleep 10; done
+	@echo "── Step 6: apply bootstrap instance ─────────────────────────────────────────"
+	$(KC) kubectl apply -f ocm/deploy/bootstrap-instance-keystone.yaml
+	@echo "── Step 7: trigger immediate OCIRepository reconciliation (skip 10m interval) ─"
+	$(KC) kubectl annotate ocirepository ocm-controller-bootstrap -n $(BOOTSTRAP_NS) \
+	  reconcile.fluxcd.io/requestedAt="$$(date +%s)" --overwrite || true
+	@echo "── Step 8: wait for OCM controller HelmRelease (up to 10m) ──────────────────"
+	$(KC) kubectl wait --for=condition=Ready helmrelease/ocm-k8s-toolkit \
+	  -n $(BOOTSTRAP_NS) --timeout=10m
+	@echo "OCM k8s toolkit ready (chart v0.21.0 / controller v0.21.0)."
+
+# ocm-status-new: show OCM resources for new controller API.
+.PHONY: ocm-status-new
+ocm-status-new:
+	@echo "\n── OCM Repositories ──────────────────────────────────────────────"
+	$(KC) kubectl get repository.delivery.ocm.software -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── OCM Components ────────────────────────────────────────────────"
+	$(KC) kubectl get component.delivery.ocm.software -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── OCM Resources ─────────────────────────────────────────────────"
+	$(KC) kubectl get resource.delivery.ocm.software -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── kro instances ─────────────────────────────────────────────────"
+	$(KC) kubectl get keystonestack,infrastack -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── OCIRepositories ───────────────────────────────────────────────"
+	$(KC) kubectl get ocirepository -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── HelmReleases ──────────────────────────────────────────────────"
+	$(KC) kubectl get helmrelease -n $(NAMESPACE) 2>/dev/null || echo "(none)"
+	@echo "\n── Pods ($(NAMESPACE)) ────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(NAMESPACE) 2>/dev/null | grep -v "keep-image" || true

@@ -1,0 +1,32 @@
+# GreenhouseBootstrap instance for the keystone SCI cluster.
+#
+# Installs only the OCM k8s toolkit controller (Flux and kro are pre-installed).
+# The prerequisites bundle must already be pushed to PREREQUISITES_REGISTRY
+# (ghcr.io/<owner>/prerequisites) by the CI workflow before applying this.
+#
+# Apply via:
+#   make -f Makefile.scikeystone ocm-controller-install-v2
+#
+# The registry secret (ghcr-bootstrap-creds) is created by that Makefile target.
+apiVersion: kro.run/v1alpha1
+kind: GreenhouseBootstrap
+metadata:
+  name: keystone-bootstrap
+  namespace: greenhouse
+spec:
+  onSiteRegistry: "ghcr.io/sofiyadesaisap/prerequisites"
+  registrySecretName: "ghcr-bootstrap-creds"
+  certManagerVersion: "1.20.1"
+  prometheusCrdsVersion: "14.0.0"
+  ocmControllerVersion: "0.19.1"
+  kroVersion: "0.9.4"
+  fluxVersion: "2.5.1"
+
+  installPrerequisites: true
+
+  installCertManager: false
+  installOcmController: true
+  installPrometheusCrds: false
+
+  enableKro: false
+  enableFlux: false

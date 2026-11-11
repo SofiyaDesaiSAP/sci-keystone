@@ -1,0 +1,70 @@
+# Vendor
+vendor/**
+node_modules
+
+# TestData
+dev-env/samples/**/local_*.yaml
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin
+testbin/*
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Kubernetes Generated files - skip generated files, except for vendored files
+
+!vendor/**/zz_generated.*
+
+# OCM build artifacts
+ocm-greenhouse 
+key1-kubeconfig.yaml
+kubeconfig-for-shoot.yaml
+demo-script.md
+
+# editor and IDE paraphernalia
+.idea
+*.swp
+*.swo
+*~
+.vscode
+.claude
+.cursor
+.copilot
+
+# symlinked main.go
+/main.go
+
+# gorleaser artifacts
+dist/**
+
+# Apple files 
+.DS_Store
+
+
+
+# act artifacts needed for testing workflows
+.secrets
+.env
+act_*.json
+
+# gen-crd-api-reference-docs artifacts
+gen-crd-api-reference-docs
+
+# Hugo
+public
+.hugo_build.lock
+*.drawio.bkp
+# OCM build artifacts
+ocm/charts/
+vault/vault-init.json
+vault/vault-init.json
+vault/vault-init.json

@@ -1,0 +1,283 @@
+# kro ResourceGraphDefinition — InfraStack
+#
+# Mirrors ocm-greenhouse/deploy/bootstrap-rgd.yaml for keystone infrastructure.
+# New OCM k8s toolkit API (v0.19.1): Repository → Component → Resource → OCIRepository → HelmRelease.
+#
+# Deploys (each gated by a boolean flag):
+#   vault      (from ocm.software/sap/keystone/infra/vault)
+#   eso        (from ocm.software/sap/keystone/infra/eso)
+#   rabbitmq   (from ocm.software/sap/keystone/infra/rabbitmq, dependsOn: eso)
+#
+# Usage:
+#   kubectl apply -k ocm/deploy/
+#   kubectl apply -f ocm/deploy/infra-instance.yaml
+
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: infra-stack
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: InfraStack
+    spec:
+      onSiteRegistry: "string"
+      registrySecretName: "string"
+      # componentVersion: semver for ocm.software/sap/keystone/infra, e.g. ">=1.0.0"
+      componentVersion: "string"
+      enableVault: "boolean"
+      enableEso: "boolean"
+      enableRabbitmq: "boolean"
+
+  resources:
+
+  # ─── OCM Repository ───────────────────────────────────────────────────────────
+  - id: infraRepository
+    readyWhen:
+      - "${infraRepository.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')}"
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Repository
+      metadata:
+        name: infra-repository
+        namespace: monsoon3
+      spec:
+        repositoryRef:
+          url: "oci://${schema.spec.onSiteRegistry}"
+          secretRef:
+            name: "${schema.spec.registrySecretName}"
+
+  # ─── OCM Component ────────────────────────────────────────────────────────────
+  - id: infraComponent
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Component
+      metadata:
+        name: infra-component
+        namespace: monsoon3
+      spec:
+        component: ocm.software/sap/keystone/infra
+        semver: "${schema.spec.componentVersion}"
+        repositoryRef:
+          name: "${infraRepository.metadata.name}"
+
+  # ─── Vault ────────────────────────────────────────────────────────────────────
+  - id: vaultChartResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: vault-chart-resource
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        componentRef:
+          name: "${infraComponent.metadata.name}"
+        resource:
+          byReference:
+            resource:
+              name: vault-chart
+            referencePath:
+              - name: vault
+        additionalStatusFields:
+          oci: resource.access.toOCI()
+
+  - id: vaultOCIRepo
+    template:
+      apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: vault-oci
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        suspend: "${!schema.spec.enableVault}"
+        url: "oci://${vaultChartResource.status.additional.oci.registry}/${vaultChartResource.status.additional.oci.repository}"
+        ref:
+          digest: "${vaultChartResource.status.additional.oci.digest}"
+        secretRef:
+          name: "${schema.spec.registrySecretName}"
+        layerSelector:
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          operation: copy
+
+  - id: vaultHR
+    template:
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: vault
+        namespace: monsoon3
+      spec:
+        interval: 5m
+        suspend: "${!schema.spec.enableVault}"
+        releaseName: vault
+        targetNamespace: vault
+        chartRef:
+          kind: OCIRepository
+          name: "${vaultOCIRepo.metadata.name}"
+          namespace: monsoon3
+        install:
+          timeout: 10m
+          crds: CreateReplace
+          createNamespace: true
+        upgrade:
+          timeout: 10m
+          remediation:
+            retries: 3
+        values:
+          global:
+            imagePullSecrets:
+              - name: "${schema.spec.registrySecretName}"
+          server:
+            standalone:
+              enabled: true
+            dataStorage:
+              enabled: true
+              storageClass: default
+            image:
+              repository: "${schema.spec.onSiteRegistry}/hashicorp/vault"
+          injector:
+            image:
+              repository: "${schema.spec.onSiteRegistry}/hashicorp/vault-k8s"
+          ui:
+            enabled: true
+
+  # ─── External Secrets Operator ────────────────────────────────────────────────
+  - id: esoChartResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: eso-chart-resource
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        componentRef:
+          name: "${infraComponent.metadata.name}"
+        resource:
+          byReference:
+            resource:
+              name: eso-chart
+            referencePath:
+              - name: eso
+        additionalStatusFields:
+          oci: resource.access.toOCI()
+
+  - id: esoOCIRepo
+    template:
+      apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: eso-oci
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        suspend: "${!schema.spec.enableEso}"
+        url: "oci://${esoChartResource.status.additional.oci.registry}/${esoChartResource.status.additional.oci.repository}"
+        ref:
+          digest: "${esoChartResource.status.additional.oci.digest}"
+        secretRef:
+          name: "${schema.spec.registrySecretName}"
+        layerSelector:
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          operation: copy
+
+  - id: esoHR
+    template:
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: eso
+        namespace: monsoon3
+      spec:
+        interval: 5m
+        suspend: "${!schema.spec.enableEso}"
+        releaseName: external-secrets
+        targetNamespace: external-secrets
+        chartRef:
+          kind: OCIRepository
+          name: "${esoOCIRepo.metadata.name}"
+          namespace: monsoon3
+        install:
+          timeout: 10m
+          crds: CreateReplace
+          createNamespace: true
+        upgrade:
+          timeout: 10m
+          remediation:
+            retries: 3
+        values:
+          installCRDs: true
+          imagePullSecrets:
+            - name: "${schema.spec.registrySecretName}"
+          image:
+            repository: "${schema.spec.onSiteRegistry}/external-secrets/external-secrets"
+
+  # ─── RabbitMQ ─────────────────────────────────────────────────────────────────
+  - id: rabbitmqChartResource
+    template:
+      apiVersion: delivery.ocm.software/v1alpha1
+      kind: Resource
+      metadata:
+        name: rabbitmq-chart-resource
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        componentRef:
+          name: "${infraComponent.metadata.name}"
+        resource:
+          byReference:
+            resource:
+              name: rabbitmq-chart
+            referencePath:
+              - name: rabbitmq
+        additionalStatusFields:
+          oci: resource.access.toOCI()
+
+  - id: rabbitmqOCIRepo
+    template:
+      apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: rabbitmq-oci
+        namespace: monsoon3
+      spec:
+        interval: 10m
+        suspend: "${!schema.spec.enableRabbitmq}"
+        url: "oci://${rabbitmqChartResource.status.additional.oci.registry}/${rabbitmqChartResource.status.additional.oci.repository}"
+        ref:
+          digest: "${rabbitmqChartResource.status.additional.oci.digest}"
+        secretRef:
+          name: "${schema.spec.registrySecretName}"
+        layerSelector:
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          operation: copy
+
+  - id: rabbitmqHR
+    template:
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: rabbitmq
+        namespace: monsoon3
+      spec:
+        interval: 5m
+        suspend: "${!schema.spec.enableRabbitmq}"
+        releaseName: rabbitmq
+        chartRef:
+          kind: OCIRepository
+          name: "${rabbitmqOCIRepo.metadata.name}"
+          namespace: monsoon3
+        dependsOn:
+          - name: "${esoHR.metadata.name}"
+        install:
+          timeout: 5m
+        upgrade:
+          timeout: 5m
+          remediation:
+            retries: 3
+        values:
+          image: "${schema.spec.onSiteRegistry}/library/rabbitmq:3.13-management"
+          imagePullSecrets:
+            - name: "${schema.spec.registrySecretName}"

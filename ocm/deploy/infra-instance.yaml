@@ -1,0 +1,15 @@
+apiVersion: kro.run/v1alpha1
+kind: InfraStack
+metadata:
+  name: infra
+  namespace: monsoon3
+spec:
+  # onSiteRegistry: OCI registry where prerequisites OCM bundle is stored.
+  # For GHCR staging: ghcr.io/<owner>/keystone-prerequisites
+  # After transfer to on-site: rbsc.<site>/keystone-prerequisites
+  onSiteRegistry: ghcr.io/sofiyadesaisap/keystone-prerequisites
+  registrySecretName: local-registry-creds
+  componentVersion: ">=1.0.0"
+  enableVault: true
+  enableEso: true
+  enableRabbitmq: true

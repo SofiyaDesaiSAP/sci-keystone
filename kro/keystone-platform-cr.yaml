@@ -1,0 +1,30 @@
+apiVersion: kro.run/v1alpha1
+kind: KeystonePlatform
+metadata:
+  name: keystone
+  namespace: monsoon3
+spec:
+  # registryBase: set to the local on-site registry after OCM transfer.
+  # For GHCR staging (pre-production): ghcr.io/sofiyadesaisap/keystone-ctf
+  # For RBSC simulation test:          ghcr.io/sofiyadesaisap/keystone-ctf-rbsc
+  # For real air-gated on-site:        rbsc.<site>/keystone-ctf
+  registryBase: ghcr.io/sofiyadesaisap/keystone-ctf-rbsc
+
+  namespace: monsoon3
+  keystoneVersion: "0.13.3"
+  seederVersion: "0.1.0"
+  vaultVersion: "0.28.1"
+  esoVersion: "0.10.7"
+  rabbitmqVersion: "1.1.0"
+
+  keystoneImageTag: "epoxy-20260721161808"
+  keystoneMetricsImageTag: "0.28.0-20260303111049"
+  proxysqlImageTag: "3.0.5-latest"
+  mariadbImageTag: "10.11.18"
+  memcachedImageTag: "1.6.39-alpine3.22"
+  vaultImageTag: "1.17.2"
+  vaultInjectorTag: "1.4.2"
+  esoImageTag: "v0.10.7"
+  rabbitmqImageTag: "3.13-management"
+
+  registryCredsSecret: local-registry-creds

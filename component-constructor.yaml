@@ -1,0 +1,278 @@
+# yaml-language-server: $schema=https://ocm.software/latest/schemas/bindings/go/constructor/schema-2020-12.json
+#
+# DEPRECATED: Replaced by ocm/keystone-component.yaml + ocm/infra-component.yaml
+# (greenhouse architecture — new OCM k8s toolkit v0.19.1 with Repository/Component/Resource).
+# This file used envsubst-based variable substitution and the old flat component structure.
+# Kept for reference only. Use `make build-keystone` and `make build-infra` instead.
+#
+# OCM Component Descriptor — SAP Keystone platform (multi-component, greenhouse pattern).
+#
+# Variables (set via env or Makefile):
+#   KEYSTONE_VERSION   - keystone chart version, e.g. 0.13.3
+#   SEEDER_VERSION     - openstack-seeder chart version, e.g. 0.1.0
+#   VAULT_VERSION      - hashicorp/vault chart version, e.g. 0.28.1
+#   ESO_VERSION        - external-secrets chart version, e.g. 0.10.7
+#   RABBITMQ_VERSION   - our minimal rabbitmq wrapper chart version, e.g. 1.1.0
+#   PLATFORM_VERSION   - umbrella component version, e.g. 1.0.0
+#   GITHUB_USER        - ghcr.io username, e.g. sofiyadesaisap
+#
+#   Image tags (for ociArtifact resources — bundled by `ocm transfer --copy-resources`):
+#   KEYSTONE_IMAGE_TAG, KEYSTONE_METRICS_IMAGE_TAG, PROXYSQL_IMAGE_TAG,
+#   MARIADB_IMAGE_TAG, MARIADB_POD_READINESS_TAG, MARIADB_ALPINE_TAG,
+#   MYSQLD_EXPORTER_TAG, MEMCACHED_IMAGE_TAG, MEMCACHED_EXPORTER_TAG,
+#   VAULT_IMAGE_TAG, VAULT_INJECTOR_TAG, ESO_IMAGE_TAG, RABBITMQ_IMAGE_TAG,
+#   K8S_ENTRYPOINT_TAG, SQL_EXPORTER_TAG, SEEDER_IMAGE_TAG, ALPINE_KUBECTL_TAG
+#
+# Charts are read from local .tgz files produced by `make chart-prepare`.
+# All components are pushed to ghcr.io/GITHUB_USER/keystone-ctf as a single CTF.
+# The umbrella component (keystone-platform) is signed with --recursive, which
+# signs all referenced sub-components in one pass.
+#
+# Build:   make ocm-build
+# Sign:    make ocm-sign      (signs keystone-platform --recursive → all sub-components)
+# Push:    make ocm-push
+# All:     make ocm-fresh-push
+
+components:
+
+# ─── Infrastructure components ────────────────────────────────────────────────
+
+- name: ocm.software/sap/keystone/vault
+  version: ${VAULT_VERSION}
+  provider:
+    name: sap
+  labels:
+    - name: sap.com/component
+      value: vault
+  resources:
+    - name: vault-chart
+      type: helmChart
+      version: ${VAULT_VERSION}
+      input:
+        type: file
+        path: charts/vault-${VAULT_VERSION}.tgz
+        mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+        compress: false
+
+    - name: vault-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "hashicorp/vault:${VAULT_IMAGE_TAG}"
+
+    - name: vault-injector-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "hashicorp/vault-k8s:${VAULT_INJECTOR_TAG}"
+
+
+- name: ocm.software/sap/keystone/eso
+  version: ${ESO_VERSION}
+  provider:
+    name: sap
+  labels:
+    - name: sap.com/component
+      value: external-secrets
+  resources:
+    - name: eso-chart
+      type: helmChart
+      version: ${ESO_VERSION}
+      input:
+        type: file
+        path: charts/external-secrets-${ESO_VERSION}.tgz
+        mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+        compress: false
+
+    - name: eso-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "oci.external-secrets.io/external-secrets/external-secrets:${ESO_IMAGE_TAG}"
+
+
+
+
+- name: ocm.software/sap/keystone/rabbitmq
+  version: ${RABBITMQ_VERSION}
+  provider:
+    name: sap
+  labels:
+    - name: sap.com/component
+      value: rabbitmq
+  resources:
+    - name: rabbitmq-chart
+      type: helmChart
+      version: ${RABBITMQ_VERSION}
+      input:
+        type: file
+        path: charts/rabbitmq-${RABBITMQ_VERSION}.tgz
+        mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+        compress: false
+
+    - name: rabbitmq-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "rabbitmq:${RABBITMQ_IMAGE_TAG}"
+
+
+# ─── Keystone application component ───────────────────────────────────────────
+
+- name: ocm.software/sap/keystone
+  version: ${KEYSTONE_VERSION}
+  provider:
+    name: sap
+  labels:
+    - name: sap.com/component
+      value: keystone
+
+  resources:
+
+    # type: file packs the .tgz directly — avoids OCM helm-synthesis macOS temp dir bug.
+    # mediaType tells the OCM controller this is a helm chart layer.
+    - name: keystone-chart
+      type: helmChart
+      version: ${KEYSTONE_VERSION}
+      input:
+        type: file
+        path: charts/keystone-${KEYSTONE_VERSION}.tgz
+        mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+        compress: false
+
+    - name: seeder-chart
+      type: helmChart
+      version: ${SEEDER_VERSION}
+      input:
+        type: file
+        path: charts/openstack-seeder-${SEEDER_VERSION}.tgz
+        mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+        compress: false
+
+    # Container images — bundled so `ocm transfer --copy-resources` copies them
+    # from source registries (Keppel/Docker Hub) to the target (GHCR or on-site RBSC).
+    # registry fields in the FluxDeployer values must point to where these land
+    # after transfer; kro RGD handles this via spec.registryBase at deploy time.
+    - name: keystone-api-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/loci-keystone:${KEYSTONE_IMAGE_TAG}"
+
+    - name: keystone-metrics-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/statsd-exporter:${KEYSTONE_METRICS_IMAGE_TAG}"
+
+    - name: proxysql-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/proxysql:${PROXYSQL_IMAGE_TAG}"
+
+    - name: mariadb-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG}"
+
+    - name: mariadb-pod-readiness-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/pod-readiness:${MARIADB_POD_READINESS_TAG}"
+
+    - name: mariadb-alpine-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/alpine-mariadb:${MARIADB_ALPINE_TAG}"
+
+    - name: mysqld-exporter-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG}"
+
+    - name: memcached-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/library/memcached:${MEMCACHED_IMAGE_TAG}"
+
+    - name: memcached-exporter-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}"
+
+    - name: kubernetes-entrypoint-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "ghcr.io/sapcc/kubernetes-entrypoint:${K8S_ENTRYPOINT_TAG}"
+
+    - name: sql-exporter-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/sql-exporter:${SQL_EXPORTER_TAG}"
+
+    - name: seeder-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/openstack-seeder:${SEEDER_IMAGE_TAG}"
+
+    - name: alpine-kubectl-image
+      type: ociArtifact
+      version: "1.0.0"
+      access:
+        type: ociArtifact
+        imageReference: "keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/alpine-kubectl:${ALPINE_KUBECTL_TAG}"
+
+
+
+# ─── Umbrella / platform component ────────────────────────────────────────────
+#
+# References all deployable sub-components. Signing this with --recursive
+# propagates the signature to all referenced components.
+# Versioning: bump PLATFORM_VERSION when adding/updating any sub-component.
+
+- name: ocm.software/sap/keystone-platform
+  version: ${PLATFORM_VERSION}
+  provider:
+    name: sap
+  labels:
+    - name: sap.com/component
+      value: keystone-platform
+  componentReferences:
+    - name: vault
+      componentName: ocm.software/sap/keystone/vault
+      version: ${VAULT_VERSION}
+    - name: eso
+      componentName: ocm.software/sap/keystone/eso
+      version: ${ESO_VERSION}
+    - name: rabbitmq
+      componentName: ocm.software/sap/keystone/rabbitmq
+      version: ${RABBITMQ_VERSION}
+    - name: keystone
+      componentName: ocm.software/sap/keystone
+      version: ${KEYSTONE_VERSION}

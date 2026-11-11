@@ -1,0 +1,5328 @@
+groups:
+- jobs:
+  - deploy-verification
+  - deploy-bronze
+  - deploy-silver
+  - deploy-gold
+  - deploy-globally
+  - qa-de-1-diff
+  - qa-de-1-deploy
+  - qa-de-1-tempest
+  - qa-de-2-diff
+  - qa-de-2-deploy
+  - qa-de-3-diff
+  - qa-de-3-deploy
+  - qa-de-4-diff
+  - qa-de-4-deploy
+  - qa-de-5-diff
+  - qa-de-5-deploy
+  - qa-de-6-diff
+  - qa-de-6-deploy
+  - readme
+  name: pre_production
+- jobs:
+  - eu-de-3-diff
+  - eu-de-3-deploy
+  - from_pre_production
+  name: verification
+- jobs:
+  - ap-jp-2-diff
+  - ap-jp-2-deploy
+  - na-ca-1-diff
+  - na-ca-1-deploy
+  - na-us-3-diff
+  - na-us-3-deploy
+  - from_verification
+  name: bronze
+- jobs:
+  - ap-ae-1-diff
+  - ap-ae-1-deploy
+  - ap-au-1-diff
+  - ap-au-1-deploy
+  - ap-cn-1-diff
+  - ap-cn-1-deploy
+  - ap-jp-1-diff
+  - ap-jp-1-deploy
+  - ap-sa-1-diff
+  - ap-sa-1-deploy
+  - la-br-1-diff
+  - la-br-1-deploy
+  - from_bronze
+  name: silver
+- jobs:
+  - eu-de-1-diff
+  - eu-de-1-deploy
+  - eu-de-2-diff
+  - eu-de-2-deploy
+  - eu-nl-1-diff
+  - eu-nl-1-deploy
+  - na-us-1-diff
+  - na-us-1-deploy
+  - na-us-2-diff
+  - na-us-2-deploy
+  - from_silver
+  name: gold
+jobs:
+- name: from_pre_production
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-deploy
+      - get: script
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-deploy
+        resource: cc-secrets-ci.git
+      - get: unified-kubernetes-toolbox.image
+        params:
+          skip_download: true
+        passed:
+        - qa-de-2-deploy
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-deploy
+        resource: cc-secrets-qa-de-2-put.git
+      - try:
+          get: loci-keystone.docker-image
+          params:
+            skip_download: true
+          passed:
+          - qa-de-2-deploy
+      - try:
+          get: apache-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - qa-de-2-deploy
+      - try:
+          get: statsd-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - qa-de-2-deploy
+      - try:
+          get: proxysql.docker-image
+          params:
+            skip_download: true
+          passed:
+          - qa-de-2-deploy
+- name: qa-de-2-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-qa-de-2.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+      - get: loci-keystone.docker-image
+        params:
+          skip_download: true
+        trigger: true
+      - get: apache-exporter.docker-image
+        params:
+          skip_download: true
+        trigger: true
+      - get: statsd-exporter.docker-image
+        params:
+          skip_download: true
+        trigger: true
+      - get: proxysql.docker-image
+        params:
+          skip_download: true
+        trigger: true
+  - config:
+      image_resource:
+        name: ""
+        source:
+          repository: keppel.eu-de-1.cloud.sap/ccloud/shared-ci-update-secrets
+          tag: latest
+        type: registry-image
+      inputs:
+      - name: cc-secrets-ci.git
+      - name: helm-charts.git
+      - name: secrets.git
+      - name: loci-keystone.docker-image
+      - name: apache-exporter.docker-image
+      - name: statsd-exporter.docker-image
+      - name: proxysql.docker-image
+      outputs:
+      - name: output
+      platform: linux
+      run:
+        args:
+        - -ec
+        - |
+          source cc-secrets-ci.git/ci/shared/functions.sh
+          update_secrets
+        path: bash
+    output_mapping:
+      output: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+      DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+      HELM_VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      PINNED: ""
+      REGION: qa-de-2
+      RELEASE: keystone
+      RELEASE_NAME: epoxy
+      USE_DRY_RUN_SERVER: "true"
+      VAULT_ADDR: https://vault.global.cloud.sap
+      VAULT_KV_ENGINE: secrets
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: update-secrets
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+            secrets.git: output_versions
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            REGION: qa-de-2
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+              local:keystone.yaml
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          task: diff
+      - file: cc-secrets-ci.git/ci/shared/task-promtool-check.yaml
+        image: unified-kubernetes-toolbox.image
+        params:
+          CHART_PATH: openstack/keystone
+          KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+          KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+          NAMESPACE: monsoon3
+          RELEASE: keystone
+        task: promtool-check
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog.yaml
+          input_mapping:
+            secrets.git: output_versions
+          output_mapping:
+            output: output_changelog
+          params:
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - try:
+      file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+      image: unified-kubernetes-toolbox.image
+      input_mapping:
+        secrets-script.git: cc-secrets-ci.git
+      params:
+        REGION: qa-de-2
+      task: replicate-images
+      timeout: 60m
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_changelog
+    put: cc-secrets-qa-de-2-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: qa-de-2.release
+  name: qa-de-2-deploy
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        resource: cc-secrets-qa-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-2-diff
+      - get: build-data
+      - get: loci-keystone.docker-image
+        params:
+          skip_download: true
+        passed:
+        - qa-de-2-diff
+      - get: apache-exporter.docker-image
+        params:
+          skip_download: true
+        passed:
+        - qa-de-2-diff
+      - get: statsd-exporter.docker-image
+        params:
+          skip_download: true
+        passed:
+        - qa-de-2-diff
+      - get: proxysql.docker-image
+        params:
+          skip_download: true
+        passed:
+        - qa-de-2-diff
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-2
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - try:
+      file: cc-secrets-ci.git/ci/shared/task-devops-insights.yaml
+      input_mapping:
+        image: loci-keystone.docker-image
+      params:
+        DEPLOYMENTTARGET: development
+        IDENTIFIER: keystone
+      task: devops-insights
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: qa-de-2
+      SENTRY_HOST: https://sentry.qa-de-2.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:qa-de-2/sentry/credentials/admin.token))
+    task: sentry-release
+  serial: true
+- name: qa-de-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-qa-de-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        resource: cc-secrets-qa-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-2-diff
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: qa-de-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: qa-de-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-qa-de-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: qa-de-1.release
+  name: qa-de-1-deploy
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-1-diff
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-1-diff
+        resource: cc-secrets-qa-de-1-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-1-diff
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-1-diff
+      - get: build-data
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    on_success:
+      put: tempest-qa-de-1.trigger
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: qa-de-1
+      SENTRY_HOST: https://sentry.qa-de-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:qa-de-1/sentry/credentials/admin.token))
+    task: sentry-release
+  serial: true
+  serial_groups:
+  - qa-de-1-tempest-blocker
+- name: qa-de-1-tempest
+  plan:
+  - in_parallel:
+      steps:
+      - get: tempest-qa-de-1.trigger
+        passed:
+        - qa-de-1-deploy
+        trigger: true
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-1-deploy
+      - get: cc-secrets-tempest-qa-de-1.git
+        params:
+          depth: 100
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-1-deploy
+  - in_parallel:
+      steps:
+      - file: cc-secrets-tempest-qa-de-1.git/ci/tempest/tasks/run-tempest.yaml
+        image: unified-kubernetes-toolbox.image
+        input_mapping:
+          charts: helm-charts.git
+          secrets: cc-secrets-tempest-qa-de-1.git
+        on_failure:
+          try:
+            params:
+              channel: '#cc-os-keystone'
+              icon_emoji: ':poop:'
+              silent: "true"
+              text: |
+                :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed> :boom::boom: Check the latest results (<https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/qa-de-1-latest.html|HTML report> or <https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/qa-de-1-log-latest.tar.gz|log files>)
+              username: Concourse
+            put: slack-alert
+        on_success:
+          try:
+            params:
+              channel: '#cc-os-keystone'
+              icon_emoji: ':poop:'
+              silent: "true"
+              text: |
+                :white_check_mark: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME was successful> :white_check_mark::white_check_mark: Check the latest results (<https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/qa-de-1-latest.html|HTML report> or <https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/qa-de-1-log-latest.tar.gz|log files>)
+              username: Concourse
+            put: slack-alert
+        params:
+          ARGO_TOKEN: ((argo.token))
+          KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+          KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+          REGION: qa-de-1
+          SERVICE: keystone-tempest
+          TIMEOUT: "18000"
+          VAULT_ROLE_ID: ((auth.role_id))
+          VAULT_SECRET_ID: ((auth.secret_id))
+        task: run-tempest
+      - config:
+          image_resource:
+            name: ""
+            source:
+              password: ((registry-user/keppel-ccloud.password))
+              repository: keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/alpine
+              tag: "3.23"
+              username: ((registry-user/keppel-ccloud.username))
+            type: registry-image
+          platform: linux
+          run:
+            args:
+            - -e
+            - '\t  HTML report: https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/qa-de-1-latest.html  \n'
+            - '\t  Log files: https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/qa-de-1-log-latest.tar.gz  \n'
+            - \t  If latest is not longer valid then check https://objectstore-3.qa-de-1.cloud.sap/v1/AUTH_3af1c3304e3c494aa798767243b9e434/reports/keystone/  \n
+            path: /bin/echo
+        task: show-links
+  serial: true
+  serial_groups:
+  - qa-de-1-tempest-blocker
+- name: qa-de-3-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-qa-de-3.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        resource: cc-secrets-qa-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-2-diff
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: qa-de-3
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-3
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: qa-de-3
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-qa-de-3-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: qa-de-3.release
+  name: qa-de-3-deploy
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-3-diff
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-3-diff
+        resource: cc-secrets-qa-de-3-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-3-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-3-diff
+      - get: build-data
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-3
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: qa-de-3
+      SENTRY_HOST: https://sentry.qa-de-3.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:qa-de-3/sentry/credentials/admin.token))
+    task: sentry-release
+  serial: true
+- name: qa-de-4-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-qa-de-4.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        resource: cc-secrets-qa-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-2-diff
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: qa-de-4
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-4
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: qa-de-4
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-qa-de-4-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: qa-de-4.release
+  name: qa-de-4-deploy
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-4-diff
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-4-diff
+        resource: cc-secrets-qa-de-4-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-4-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-4-diff
+      - get: build-data
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-4
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: qa-de-4
+      SENTRY_HOST: https://sentry.qa-de-4.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:qa-de-4/sentry/credentials/admin.token))
+    task: sentry-release
+  serial: true
+- name: qa-de-5-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-qa-de-5.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        resource: cc-secrets-qa-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-2-diff
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: qa-de-5
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-5
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: qa-de-5
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-qa-de-5-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: qa-de-5.release
+  name: qa-de-5-deploy
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-5-diff
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-5-diff
+        resource: cc-secrets-qa-de-5-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-5-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-5-diff
+      - get: build-data
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-5
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: qa-de-5
+      SENTRY_HOST: https://sentry.qa-de-5.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:qa-de-5/sentry/credentials/admin.token))
+    task: sentry-release
+  serial: true
+- name: qa-de-6-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-qa-de-6.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+        resource: cc-secrets-qa-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-2-diff
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: qa-de-6
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-6
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: qa-de-6
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-qa-de-6-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: qa-de-6.release
+  name: qa-de-6-deploy
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-6-diff
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-6-diff
+        resource: cc-secrets-qa-de-6-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - qa-de-6-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - qa-de-6-diff
+      - get: build-data
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: qa-de-6
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: qa-de-6
+      SENTRY_HOST: https://sentry.qa-de-6.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:qa-de-6/sentry/credentials/admin.token))
+    task: sentry-release
+  serial: true
+- name: ap-jp-2-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-ap-jp-2.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_verification
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: ap-jp-2
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-jp-2
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: ap-jp-2
+          task: replicate-images
+          timeout: 60m
+      - try:
+          get: loci-keystone.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          get: apache-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          get: statsd-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          get: proxysql.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-ap-jp-2-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: ap-jp-2.release
+  name: ap-jp-2-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - ap-jp-2-diff
+      - get: deploy-bronze.trigger
+        passed:
+        - deploy-bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - ap-jp-2-diff
+        resource: cc-secrets-ap-jp-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - ap-jp-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - ap-jp-2-diff
+      - get: build-data
+      - try:
+          get: loci-keystone.docker-image
+          params:
+            skip_download: true
+          passed:
+          - ap-jp-2-diff
+      - try:
+          get: apache-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - ap-jp-2-diff
+      - try:
+          get: statsd-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - ap-jp-2-diff
+      - try:
+          get: proxysql.docker-image
+          params:
+            skip_download: true
+          passed:
+          - ap-jp-2-diff
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-jp-2
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: ap-jp-2
+      SENTRY_HOST: https://sentry.ap-jp-2.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:ap-jp-2/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      file: cc-secrets-ci.git/ci/shared/task-devops-insights.yaml
+      input_mapping:
+        image: loci-keystone.docker-image
+      params:
+        DEPLOYMENTTARGET: production
+        IDENTIFIER: keystone
+      task: devops-insights
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: na-us-3-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-na-us-3.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_verification
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: na-us-3
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-us-3
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: na-us-3
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-na-us-3-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: na-us-3.release
+  name: na-us-3-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - na-us-3-diff
+      - get: deploy-bronze.trigger
+        passed:
+        - deploy-bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - na-us-3-diff
+        resource: cc-secrets-na-us-3-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - na-us-3-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - na-us-3-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-us-3
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: na-us-3
+      SENTRY_HOST: https://sentry.na-us-3.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:na-us-3/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: la-br-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-la-br-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_bronze
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: la-br-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: la-br-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: la-br-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-la-br-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: la-br-1.release
+  name: la-br-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - la-br-1-diff
+      - get: deploy-silver.trigger
+        passed:
+        - deploy-silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - la-br-1-diff
+        resource: cc-secrets-la-br-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - la-br-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - la-br-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: la-br-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: la-br-1
+      SENTRY_HOST: https://sentry.la-br-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:la-br-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: na-ca-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-na-ca-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_verification
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: na-ca-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-ca-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: na-ca-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-na-ca-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: na-ca-1.release
+  name: na-ca-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - na-ca-1-diff
+      - get: deploy-bronze.trigger
+        passed:
+        - deploy-bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - na-ca-1-diff
+        resource: cc-secrets-na-ca-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - na-ca-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - na-ca-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-ca-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: na-ca-1
+      SENTRY_HOST: https://sentry.na-ca-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:na-ca-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: ap-ae-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-ap-ae-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_bronze
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: ap-ae-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-ae-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: ap-ae-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-ap-ae-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: ap-ae-1.release
+  name: ap-ae-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - ap-ae-1-diff
+      - get: deploy-silver.trigger
+        passed:
+        - deploy-silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - ap-ae-1-diff
+        resource: cc-secrets-ap-ae-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - ap-ae-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - ap-ae-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-ae-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: ap-ae-1
+      SENTRY_HOST: https://sentry.ap-ae-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:ap-ae-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: ap-au-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-ap-au-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_bronze
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: ap-au-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-au-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: ap-au-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-ap-au-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: ap-au-1.release
+  name: ap-au-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - ap-au-1-diff
+      - get: deploy-silver.trigger
+        passed:
+        - deploy-silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - ap-au-1-diff
+        resource: cc-secrets-ap-au-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - ap-au-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - ap-au-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-au-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: ap-au-1
+      SENTRY_HOST: https://sentry.ap-au-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:ap-au-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: ap-cn-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-ap-cn-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_bronze
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: ap-cn-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-cn-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: ap-cn-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-ap-cn-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: ap-cn-1.release
+  name: ap-cn-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - ap-cn-1-diff
+      - get: deploy-silver.trigger
+        passed:
+        - deploy-silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - ap-cn-1-diff
+        resource: cc-secrets-ap-cn-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - ap-cn-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - ap-cn-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-cn-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: ap-cn-1
+      SENTRY_HOST: https://sentry.ap-cn-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:ap-cn-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: ap-jp-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-ap-jp-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_bronze
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: ap-jp-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-jp-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: ap-jp-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-ap-jp-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: ap-jp-1.release
+  name: ap-jp-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - ap-jp-1-diff
+      - get: deploy-silver.trigger
+        passed:
+        - deploy-silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - ap-jp-1-diff
+        resource: cc-secrets-ap-jp-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - ap-jp-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - ap-jp-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-jp-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: ap-jp-1
+      SENTRY_HOST: https://sentry.ap-jp-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:ap-jp-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: ap-sa-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-ap-sa-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_bronze
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: ap-sa-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-sa-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: ap-sa-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-ap-sa-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: ap-sa-1.release
+  name: ap-sa-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - ap-sa-1-diff
+      - get: deploy-silver.trigger
+        passed:
+        - deploy-silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - ap-sa-1-diff
+        resource: cc-secrets-ap-sa-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - ap-sa-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - ap-sa-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: ap-sa-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: ap-sa-1
+      SENTRY_HOST: https://sentry.ap-sa-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:ap-sa-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: na-us-2-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-na-us-2.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_silver
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: na-us-2
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-us-2
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: na-us-2
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-na-us-2-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: na-us-2.release
+  name: na-us-2-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - na-us-2-diff
+      - get: deploy-gold.trigger
+        passed:
+        - deploy-gold
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - na-us-2-diff
+        resource: cc-secrets-na-us-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - na-us-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - na-us-2-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-us-2
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: na-us-2
+      SENTRY_HOST: https://sentry.na-us-2.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:na-us-2/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: eu-de-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-eu-de-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_silver
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: eu-de-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-de-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: eu-de-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-eu-de-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: eu-de-1.release
+  name: eu-de-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-1-diff
+      - get: deploy-gold.trigger
+        passed:
+        - deploy-gold
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-1-diff
+        resource: cc-secrets-eu-de-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - eu-de-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-de-1
+      RELEASE: keystone
+      TIMEOUT: 30m
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: eu-de-1
+      SENTRY_HOST: https://sentry.eu-de-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:eu-de-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: eu-de-2-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-eu-de-2.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_silver
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: eu-de-2
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-de-2
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: eu-de-2
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-eu-de-2-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: eu-de-2.release
+  name: eu-de-2-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-2-diff
+      - get: deploy-gold.trigger
+        passed:
+        - deploy-gold
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-2-diff
+        resource: cc-secrets-eu-de-2-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-2-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - eu-de-2-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-de-2
+      RELEASE: keystone
+      TIMEOUT: 30m
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: eu-de-2
+      SENTRY_HOST: https://sentry.eu-de-2.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:eu-de-2/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: na-us-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-na-us-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_silver
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: na-us-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-us-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: na-us-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-na-us-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: na-us-1.release
+  name: na-us-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - na-us-1-diff
+      - get: deploy-gold.trigger
+        passed:
+        - deploy-gold
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - na-us-1-diff
+        resource: cc-secrets-na-us-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - na-us-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - na-us-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: na-us-1
+      RELEASE: keystone
+      TIMEOUT: 30m
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: na-us-1
+      SENTRY_HOST: https://sentry.na-us-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:na-us-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: eu-nl-1-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-eu-nl-1.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_silver
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_silver
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: eu-nl-1
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-nl-1
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: eu-nl-1
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-eu-nl-1-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: eu-nl-1.release
+  name: eu-nl-1-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - eu-nl-1-diff
+      - get: deploy-gold.trigger
+        passed:
+        - deploy-gold
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - eu-nl-1-diff
+        resource: cc-secrets-eu-nl-1-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - eu-nl-1-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - eu-nl-1-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-nl-1
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: eu-nl-1
+      SENTRY_HOST: https://sentry.eu-nl-1.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:eu-nl-1/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: readme
+  plan:
+  - config:
+      image_resource:
+        name: ""
+        source:
+          password: ((registry-user/keppel-ccloud.password))
+          repository: keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/alpine
+          tag: "3.23"
+          username: ((registry-user/keppel-ccloud.username))
+        type: registry-image
+      platform: linux
+      run:
+        args:
+        - -e
+        - '\t    This pipeline is defined at: https://github.wdf.sap.corp/cc/secrets/tree/master/ci/keystone/\n'
+        - '\tDocumentation for this pipeline: https://operations.global.cloud.sap/docs/install/keystone/deployment.html\n'
+        - '\t        How to add a new region: https://operations.global.cloud.sap/docs/install/keystone/\n'
+        path: /bin/echo
+    task: describe-this-pipeline
+  serial: true
+- name: deploy-globally
+  plan:
+  - put: deploy-globally.trigger
+  serial: true
+- name: deploy-silver
+  plan:
+  - get: deploy-globally.trigger
+    passed:
+    - deploy-globally
+    trigger: true
+  - put: deploy-silver.trigger
+  serial: true
+- name: deploy-gold
+  plan:
+  - get: deploy-globally.trigger
+    passed:
+    - deploy-globally
+    trigger: true
+  - put: deploy-gold.trigger
+  serial: true
+- name: from_silver
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+      - get: script
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-ci.git
+      - get: unified-kubernetes-toolbox.image
+        params:
+          skip_download: true
+        passed:
+        - from_bronze
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_bronze
+        resource: cc-secrets-qa-de-2-put.git
+      - try:
+          get: loci-keystone.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_bronze
+      - try:
+          get: apache-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_bronze
+      - try:
+          get: statsd-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_bronze
+      - try:
+          get: proxysql.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_bronze
+- name: deploy-bronze
+  plan:
+  - get: deploy-globally.trigger
+    passed:
+    - deploy-globally
+    trigger: true
+  - put: deploy-bronze.trigger
+  serial: true
+- name: from_bronze
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+      - get: script
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        resource: cc-secrets-ci.git
+      - get: unified-kubernetes-toolbox.image
+        params:
+          skip_download: true
+        passed:
+        - from_verification
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_verification
+        resource: cc-secrets-qa-de-2-put.git
+      - try:
+          get: loci-keystone.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          get: apache-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          get: statsd-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+      - try:
+          get: proxysql.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_verification
+- name: eu-de-3-diff
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_pre_production
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        resource: cc-secrets-eu-de-3.git
+        trigger: true
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_pre_production
+        resource: cc-secrets-qa-de-2-put.git
+        trigger: true
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - from_pre_production
+        trigger: true
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - from_pre_production
+  - file: cc-secrets-ci.git/ci/shared/task-transport-image-versions.yaml
+    output_mapping:
+      output: output_versions
+    params:
+      APP: keystone
+      PINNED: ""
+      REGION: eu-de-3
+      SOURCE_REGION: qa-de-2
+    task: transport_versions
+  - file: cc-secrets-ci.git/ci/shared/task-helm-diff.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: output_versions
+    params:
+      ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-de-3
+      RELEASE: keystone
+      USE_DRY_RUN_SERVER: "true"
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: diff
+  - file: cc-secrets-ci.git/ci/shared/task-parse-images-from-helm-diff.yaml
+    input_mapping:
+      secrets.git: cc-secrets-ci.git
+    task: parse-images-from-helm-diff
+  - in_parallel:
+      steps:
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-changelog-helm-diff.yaml
+          params:
+            ADDITIONAL_HELM_ARGS: --allow-unreleased --suppress-secrets
+            CHART_PATH: openstack/keystone
+            DOCKER_REPO_TOKEN: ((registry-user/keppel-ccloud.password))
+            DOCKER_REPO_USER: ((registry-user/keppel-ccloud.username))
+            GITHUB_TOKEN: ((github-access-token/sapcc-bot))
+            KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+            KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+            NAMESPACE: monsoon3
+            OS_AUTH_URL: https://identity-3.eu-de-1.cloud.sap/v3/
+            OS_IDENTITY_API_VERSION: "3"
+            OS_PASSWORD: ((keystone-user-password/concourse-eu-de-1))
+            OS_PROJECT_ID: caa6209d2c38450f8266311fd0f05446
+            OS_USER_DOMAIN_NAME: Default
+            OS_USERNAME: concourse
+            RELEASE: keystone
+            USE_DRY_RUN_SERVER: "true"
+            VAULT_ROLE_ID: ((auth.role_id))
+            VAULT_SECRET_ID: ((auth.secret_id))
+          privileged: true
+          task: changelog
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-replicate-changed-images.yaml
+          image: unified-kubernetes-toolbox.image
+          input_mapping:
+            secrets-script.git: cc-secrets-ci.git
+          params:
+            REGION: eu-de-3
+          task: replicate-images
+          timeout: 60m
+      - try:
+          file: cc-secrets-ci.git/ci/shared/task-image-vulnerabilities-diff.yaml
+          task: image-vulnerabilities-diff
+  - get_params:
+      depth: 100
+    params:
+      rebase: true
+      repository: output_versions
+    put: cc-secrets-eu-de-3-put.git
+  serial: true
+- ensure:
+    inputs: all
+    put: eu-de-3.release
+  name: eu-de-3-deploy
+  on_failure:
+    try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :boom: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|$BUILD_PIPELINE_NAME:$BUILD_JOB_NAME job #$BUILD_NAME failed>
+        username: Concourse
+      put: slack-alert
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-3-diff
+      - get: deploy-verification.trigger
+        passed:
+        - deploy-verification
+        trigger: true
+      - get: secrets.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-3-diff
+        resource: cc-secrets-eu-de-3-put.git
+      - get: cc-secrets-ci.git
+        params:
+          depth: 100
+        passed:
+        - eu-de-3-diff
+      - get: unified-kubernetes-toolbox.image
+        passed:
+        - eu-de-3-diff
+      - get: build-data
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_departure: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Started deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  - file: cc-secrets-ci.git/ci/shared/task-helm-upgrade.yaml
+    image: unified-kubernetes-toolbox.image
+    input_mapping:
+      secrets-script.git: cc-secrets-ci.git
+      secrets.git: secrets.git
+    params:
+      ADDITIONAL_HELM_ARGS: ""
+      CHART_PATH: openstack/keystone
+      KUBELOGON_PASSWORD: ((unified-kubernetes-auth/default.password))
+      KUBELOGON_USER: ((unified-kubernetes-auth/default.username))
+      NAMESPACE: monsoon3
+      REGION: eu-de-3
+      RELEASE: keystone
+      VALUES: global:db-backup-v2.yaml global:keystone.yaml local:globals local:openstack-globals
+        local:keystone.yaml
+      VAULT_ROLE_ID: ((auth.role_id))
+      VAULT_SECRET_ID: ((auth.secret_id))
+    task: deploy
+  - file: cc-secrets-ci.git/ci/shared/task-sentry-release.yaml
+    input_mapping:
+      scripts: cc-secrets-ci.git
+    params:
+      REGION: eu-de-3
+      SENTRY_HOST: https://sentry.eu-de-3.cloud.sap/
+      SENTRY_ORGANIZATION: monsoon
+      SENTRY_PROJECT: keystone
+      SENTRY_TOKEN: ((vault:eu-de-3/sentry/credentials/admin.token))
+    task: sentry-release
+  - try:
+      params:
+        channel: '#cc-os-keystone'
+        icon_emoji: ':airplane:'
+        silent: "true"
+        text: |
+          :airplane_arriving: <$ATC_EXTERNAL_URL/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME|Finished deploying $BUILD_PIPELINE_NAME to $BUILD_JOB_NAME>
+        username: Concourse
+      put: slack-alert
+  serial: true
+- name: deploy-verification
+  plan:
+  - get: deploy-globally.trigger
+    passed:
+    - deploy-globally
+    trigger: true
+  - put: deploy-verification.trigger
+  serial: true
+- name: from_verification
+  plan:
+  - in_parallel:
+      steps:
+      - get: helm-charts.git
+        params:
+          depth: 100
+        passed:
+        - from_pre_production
+      - get: script
+        params:
+          depth: 100
+        passed:
+        - from_pre_production
+        resource: cc-secrets-ci.git
+      - get: unified-kubernetes-toolbox.image
+        params:
+          skip_download: true
+        passed:
+        - from_pre_production
+      - get: secrets-source-region.git
+        params:
+          depth: 100
+        passed:
+        - from_pre_production
+        resource: cc-secrets-qa-de-2-put.git
+      - try:
+          get: loci-keystone.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_pre_production
+      - try:
+          get: apache-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_pre_production
+      - try:
+          get: statsd-exporter.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_pre_production
+      - try:
+          get: proxysql.docker-image
+          params:
+            skip_download: true
+          passed:
+          - from_pre_production
+resource_types:
+- check_every: 24h0m0s
+  name: build-data
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/swce/metadata-resource
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: 24h0m0s
+  name: git-proxy
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud/concourse-git-resource-proxy
+    tag: latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: 24h0m0s
+  name: release
+  source:
+    repository: keppel.eu-de-1.cloud.sap/ccloud/concourse-release-resource
+    tag: v2.latest
+  type: registry-image
+- check_every: 24h0m0s
+  name: slack-notification
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/cfcommunity/slack-notification-resource
+    tag: latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: 24h0m0s
+  name: time-version-resource
+  source:
+    repository: keppel.eu-de-1.cloud.sap/ccloud/concourse-time-version-resource
+    tag: v2
+  type: registry-image
+resources:
+- check_every: 5m0s
+  name: apache-exporter.docker-image
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud/apache-exporter
+    tag: latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: never
+  expose_build_created_by: true
+  name: ap-ae-1.release
+  source:
+    region: ap-ae-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: ap-au-1.release
+  source:
+    region: ap-au-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: ap-cn-1.release
+  source:
+    region: ap-cn-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: ap-jp-1.release
+  source:
+    region: ap-jp-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: ap-jp-2.release
+  source:
+    region: ap-jp-2
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: ap-sa-1.release
+  source:
+    region: ap-sa-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  name: build-data
+  source:
+    key: openstack-keystone/build-data
+  type: build-data
+- check_every: 1h0m0s
+  name: cc-secrets-ap-ae-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-ae-1/values/globals.yaml
+    - ap-ae-1/values/openstack-globals.yaml
+    - ap-ae-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-ae-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-ae-1/values/globals.yaml
+    - ap-ae-1/values/openstack-globals.yaml
+    - ap-ae-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-au-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-au-1/values/globals.yaml
+    - ap-au-1/values/openstack-globals.yaml
+    - ap-au-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-au-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-au-1/values/globals.yaml
+    - ap-au-1/values/openstack-globals.yaml
+    - ap-au-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-cn-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-cn-1/values/globals.yaml
+    - ap-cn-1/values/openstack-globals.yaml
+    - ap-cn-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-cn-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-cn-1/values/globals.yaml
+    - ap-cn-1/values/openstack-globals.yaml
+    - ap-cn-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-jp-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-jp-1/values/globals.yaml
+    - ap-jp-1/values/openstack-globals.yaml
+    - ap-jp-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-jp-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-jp-1/values/globals.yaml
+    - ap-jp-1/values/openstack-globals.yaml
+    - ap-jp-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-jp-2.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-jp-2/values/globals.yaml
+    - ap-jp-2/values/openstack-globals.yaml
+    - ap-jp-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-jp-2-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-jp-2/values/globals.yaml
+    - ap-jp-2/values/openstack-globals.yaml
+    - ap-jp-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-sa-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-sa-1/values/globals.yaml
+    - ap-sa-1/values/openstack-globals.yaml
+    - ap-sa-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ap-sa-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - ap-sa-1/values/globals.yaml
+    - ap-sa-1/values/openstack-globals.yaml
+    - ap-sa-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-ci.git
+  source:
+    branch: master
+    paths:
+    - ci/keystone/
+    - ci/shared/
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-de-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-de-1/values/globals.yaml
+    - eu-de-1/values/openstack-globals.yaml
+    - eu-de-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-de-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-de-1/values/globals.yaml
+    - eu-de-1/values/openstack-globals.yaml
+    - eu-de-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-de-2.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-de-2/values/globals.yaml
+    - eu-de-2/values/openstack-globals.yaml
+    - eu-de-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-de-2-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-de-2/values/globals.yaml
+    - eu-de-2/values/openstack-globals.yaml
+    - eu-de-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-de-3.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-de-3/values/globals.yaml
+    - eu-de-3/values/openstack-globals.yaml
+    - eu-de-3/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-de-3-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-de-3/values/globals.yaml
+    - eu-de-3/values/openstack-globals.yaml
+    - eu-de-3/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-nl-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-nl-1/values/globals.yaml
+    - eu-nl-1/values/openstack-globals.yaml
+    - eu-nl-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-eu-nl-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - eu-nl-1/values/globals.yaml
+    - eu-nl-1/values/openstack-globals.yaml
+    - eu-nl-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-la-br-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - la-br-1/values/globals.yaml
+    - la-br-1/values/openstack-globals.yaml
+    - la-br-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-la-br-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - la-br-1/values/globals.yaml
+    - la-br-1/values/openstack-globals.yaml
+    - la-br-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-ca-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-ca-1/values/globals.yaml
+    - na-ca-1/values/openstack-globals.yaml
+    - na-ca-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-ca-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-ca-1/values/globals.yaml
+    - na-ca-1/values/openstack-globals.yaml
+    - na-ca-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-us-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-us-1/values/globals.yaml
+    - na-us-1/values/openstack-globals.yaml
+    - na-us-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-us-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-us-1/values/globals.yaml
+    - na-us-1/values/openstack-globals.yaml
+    - na-us-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-us-2.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-us-2/values/globals.yaml
+    - na-us-2/values/openstack-globals.yaml
+    - na-us-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-us-2-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-us-2/values/globals.yaml
+    - na-us-2/values/openstack-globals.yaml
+    - na-us-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-us-3.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-us-3/values/globals.yaml
+    - na-us-3/values/openstack-globals.yaml
+    - na-us-3/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-na-us-3-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - na-us-3/values/globals.yaml
+    - na-us-3/values/openstack-globals.yaml
+    - na-us-3/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-1.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-1/values/globals.yaml
+    - qa-de-1/values/openstack-globals.yaml
+    - qa-de-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-1-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-1/values/globals.yaml
+    - qa-de-1/values/openstack-globals.yaml
+    - qa-de-1/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-2.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-2/values/globals.yaml
+    - qa-de-2/values/openstack-globals.yaml
+    - qa-de-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-2-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-2/values/globals.yaml
+    - qa-de-2/values/openstack-globals.yaml
+    - qa-de-2/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-3.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-3/values/globals.yaml
+    - qa-de-3/values/openstack-globals.yaml
+    - qa-de-3/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-3-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-3/values/globals.yaml
+    - qa-de-3/values/openstack-globals.yaml
+    - qa-de-3/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-4.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-4/values/globals.yaml
+    - qa-de-4/values/openstack-globals.yaml
+    - qa-de-4/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-4-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-4/values/globals.yaml
+    - qa-de-4/values/openstack-globals.yaml
+    - qa-de-4/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-5.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-5/values/globals.yaml
+    - qa-de-5/values/openstack-globals.yaml
+    - qa-de-5/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-5-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-5/values/globals.yaml
+    - qa-de-5/values/openstack-globals.yaml
+    - qa-de-5/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-6.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-6/values/globals.yaml
+    - qa-de-6/values/openstack-globals.yaml
+    - qa-de-6/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-qa-de-6-put.git
+  source:
+    branch: master
+    paths:
+    - global/values/db-backup-v2.yaml
+    - global/values/keystone.yaml
+    - qa-de-6/values/globals.yaml
+    - qa-de-6/values/openstack-globals.yaml
+    - qa-de-6/values/keystone.yaml
+    private_key: ((github-private-key/cc-secrets-push))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 1h0m0s
+  name: cc-secrets-tempest-qa-de-1.git
+  source:
+    branch: master
+    paths:
+    - qa-de-1/values/tempest.yaml
+    - qa-de-1/values/globals.yaml
+    - ci/tempest/tasks/run-tempest.yaml
+    private_key: ((github-private-key/cc-secrets))
+    uri: git@github.wdf.sap.corp:cc/secrets.git
+  type: git-proxy
+  webhook_token: random
+- check_every: 525600h0m0s
+  name: deploy-bronze.trigger
+  source: null
+  type: time-version-resource
+- check_every: 525600h0m0s
+  name: deploy-globally.trigger
+  source: null
+  type: time-version-resource
+- check_every: 525600h0m0s
+  name: deploy-gold.trigger
+  source: null
+  type: time-version-resource
+- check_every: 525600h0m0s
+  name: deploy-silver.trigger
+  source: null
+  type: time-version-resource
+- check_every: 525600h0m0s
+  name: deploy-verification.trigger
+  source: null
+  type: time-version-resource
+- check_every: never
+  expose_build_created_by: true
+  name: eu-de-1.release
+  source:
+    region: eu-de-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: eu-de-2.release
+  source:
+    region: eu-de-2
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: eu-de-3.release
+  source:
+    region: eu-de-3
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: eu-nl-1.release
+  source:
+    region: eu-nl-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- name: helm-charts.git
+  old_name: sapcc-helm-charts.git
+  source:
+    branch: master
+    paths:
+    - openstack/keystone/
+    - common/mariadb/
+    - common/memcached/
+    - common/mysql_metrics/
+    - common/rabbitmq/
+    - common/region_check/
+    - openstack/utils/
+    - openstack/tempest/tempest-base/
+    - openstack/tempest/keystone-tempest/
+    uri: https://github.com/sapcc/helm-charts.git
+  type: git
+- check_every: never
+  expose_build_created_by: true
+  name: la-br-1.release
+  source:
+    region: la-br-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: 5m0s
+  name: loci-keystone.docker-image
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud/loci-keystone
+    tag: epoxy-latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: never
+  expose_build_created_by: true
+  name: na-ca-1.release
+  source:
+    region: na-ca-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: na-us-1.release
+  source:
+    region: na-us-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: na-us-2.release
+  source:
+    region: na-us-2
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: na-us-3.release
+  source:
+    region: na-us-3
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: 5m0s
+  name: proxysql.docker-image
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud/shared-app-images/proxysql
+    tag: 3.0.9-latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: never
+  expose_build_created_by: true
+  name: qa-de-1.release
+  source:
+    region: qa-de-1
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: qa-de-2.release
+  source:
+    region: qa-de-2
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: qa-de-3.release
+  source:
+    region: qa-de-3
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: qa-de-4.release
+  source:
+    region: qa-de-4
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: qa-de-5.release
+  source:
+    region: qa-de-5
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- check_every: never
+  expose_build_created_by: true
+  name: qa-de-6.release
+  source:
+    region: qa-de-6
+    tenso_password: ((keystone-user-password/tenso-prod))
+  type: release
+- name: slack-alert
+  source:
+    url: ((slack-webhook-url/default))
+  type: slack-notification
+- check_every: 5m0s
+  name: statsd-exporter.docker-image
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud/shared-app-images/statsd-exporter
+    tag: 0.29.0-latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+- check_every: 525600h0m0s
+  name: tempest-qa-de-1.trigger
+  source: {}
+  type: time-version-resource
+- check_every: 24h0m0s
+  name: unified-kubernetes-toolbox.image
+  source:
+    password: ((registry-user/keppel-ccloud.password))
+    repository: keppel.eu-de-1.cloud.sap/ccloud/unified-kubernetes-toolbox
+    tag: latest
+    username: ((registry-user/keppel-ccloud.username))
+  type: registry-image
+var_sources:
+- config:
+    auth_backend: approle
+    auth_params:
+      role_id: ((auth.role_id))
+      secret_id: ((auth.secret_id))
+    path_prefix: /secrets
+    url: https://vault.global.cloud.sap
+  name: vault
+  type: vault

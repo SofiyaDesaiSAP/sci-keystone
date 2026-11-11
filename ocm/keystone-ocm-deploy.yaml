@@ -1,0 +1,265 @@
+# DEPRECATED: Replaced by kro RGD pattern in ocm/deploy/keystone-kro-rgd.yaml
+# (greenhouse architecture — new OCM k8s toolkit v0.19.1 API).
+# This file uses old ComponentVersion/Resource/FluxDeployer OCM controller v0.33.0 API.
+# Kept for reference. Use `make deploy-apply deploy-instance-keystone` instead.
+#
+# OCM + Flux deployment manifests for SAP Keystone
+#
+# Flow:
+#   ComponentVersion  →  fetches + verifies signed component from GHCR
+#   Resource          →  extracts keystone-chart helmChart resource as local Snapshot
+#   FluxDeployer      →  creates OCIRepository from Snapshot + HelmRelease
+
+---
+# Step 1: Fetch and verify the signed OCM component from GHCR
+apiVersion: delivery.ocm.software/v1alpha1
+kind: ComponentVersion
+metadata:
+  name: keystone
+  namespace: monsoon3
+spec:
+  interval: 10m
+  component: ocm.software/sap/keystone
+  version:
+    semver: "0.13.3"
+  repository:
+    url: ghcr.io/sofiyadesaisap/keystone-ctf
+    secretRef:
+      name: ghcr-creds
+  verify:
+  - name: keystone-sig
+    publicKey:
+      secretRef:
+        name: keystone-signing-pubkey
+
+---
+# Step 2: Extract the keystone-chart helm resource and create a local Snapshot
+apiVersion: delivery.ocm.software/v1alpha1
+kind: Resource
+metadata:
+  name: keystone-chart
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: ComponentVersion
+    name: keystone
+    namespace: monsoon3
+    resourceRef:
+      name: keystone-chart
+      version: "0.13.3"
+
+---
+# Step 3: Create OCIRepository from Snapshot and deploy via HelmRelease
+# FluxDeployer auto-fills chartRef pointing to the generated OCIRepository.
+# helmReleaseTemplate provides the deploy-time config (values, namespace, etc.)
+apiVersion: delivery.ocm.software/v1alpha1
+kind: FluxDeployer
+metadata:
+  name: keystone
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: Resource
+    name: keystone-chart
+    namespace: monsoon3
+  waitForReady: true
+  helmReleaseTemplate:
+    interval: 5m
+    releaseName: keystone
+    targetNamespace: monsoon3
+    dependsOn:
+      - name: rabbitmq
+        namespace: monsoon3
+    install:
+      timeout: 20m0s
+      crds: CreateReplace
+      disableWait: true
+    upgrade:
+      timeout: 20m0s
+      disableWait: true
+    valuesFrom:
+    - kind: Secret
+      name: keystone-helm-values
+      valuesKey: values.yaml
+    values:
+      imagePullSecrets:
+        - local-registry-creds
+      global:
+        database: mariadb
+        linkerd_requested: false
+        region: test
+        tld: cloud.sap
+        registry: keppel.eu-nl-1.cloud.sap/ccloud
+        registryAlternateRegion: keppel.eu-nl-1.cloud.sap/ccloud
+        dockerHubMirrorAlternateRegion: keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror
+        ghcrIoMirrorAlternateRegion: ghcr.io
+      debug: false
+      run_db_migration: false
+      api:
+        imageTag: 'epoxy-20260721161808'
+        adminUser: admin
+        adminProjectName: admin
+        cloudAdminDomainName: ccadmin
+        cloudAdminProjectName: cloud_admin
+        cloudAdminProjectId: '00000000-0000-0000-0000-000000000000'
+        default_tags:
+        - test-tag
+        auth:
+          methods: password,token,application_credential
+        cc_radius:
+          host: "localhost"
+          port: 16451
+        fernet:
+          maxActiveKeys: 3
+        metrics:
+          imageTag: '0.28.0-20260303111049'
+        replicas: 1
+        resources:
+          requests:
+            cpu: 200m
+            memory: 192Mi
+          limits:
+            cpu: 1000m
+            memory: 1500Mi
+        token:
+          expiration: 28800
+      cron:
+        imageTag: 'epoxy-20260721161808'
+        cronSchedule: "0 3 * * *"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 200Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      audit:
+        central_service:
+          host: "rabbitmq.monsoon3.svc.cluster.local"
+          port: 5672
+      services:
+        type: ClusterIP
+        ingress:
+          enabled: false
+        public:
+          scheme: http
+          host: keystone-api
+        admin:
+          scheme: http
+          host: keystone-api
+      federation:
+        oidc:
+          enabled: false
+      postgresql:
+        enabled: false
+      max_pool_size: 50
+      max_overflow: -1
+      proxysql:
+        imageRepository: keppel.eu-nl-1.cloud.sap/ccloud/shared-app-images/proxysql
+        imageTag: '3.0.5-latest'
+        connect_retries_delay: 1000
+        mode: host_alias
+        max_connections_per_proc: 15
+      priorityClassName: ""
+      mariadb:
+        enabled: true
+        priority_class: ""
+        priority_class_backup: ""
+        priority_class_sync: ""
+        persistence_claim:
+          enabled: false
+        users:
+          keystone:
+            name: keystone
+        backup_v2:
+          enabled: false
+        backup:
+          enabled: false
+      mysql_metrics:
+        enabled: true
+      memcached:
+        enabled: true
+        priority_class: ""
+        resources:
+          enabled: true
+          limits:
+            memory: 256Mi
+            cpu: 500m
+          requests:
+            memory: 64Mi
+            cpu: 10m
+      sre:
+        enabled: false
+      alerts:
+        enabled: false
+      sentry:
+        enabled: false
+      osprofiler:
+        enabled: false
+
+---
+# Step 4: Extract the openstack-seeder chart resource and create a local Snapshot
+apiVersion: delivery.ocm.software/v1alpha1
+kind: Resource
+metadata:
+  name: seeder-chart
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: ComponentVersion
+    name: keystone
+    namespace: monsoon3
+    resourceRef:
+      name: seeder-chart
+      version: "0.1.0"
+
+---
+# Step 5: Deploy openstack-seeder via FluxDeployer
+# dependsOn: keystone ensures the seeder waits for Keystone to be Ready before seeding.
+apiVersion: delivery.ocm.software/v1alpha1
+kind: FluxDeployer
+metadata:
+  name: openstack-seeder
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: Resource
+    name: seeder-chart
+    namespace: monsoon3
+  helmReleaseTemplate:
+    interval: 10m
+    releaseName: openstack-seeder
+    targetNamespace: monsoon3
+    dependsOn:
+      - name: keystone
+        namespace: monsoon3
+    install:
+      timeout: 10m
+      crds: CreateReplace
+    upgrade:
+      timeout: 10m
+    valuesFrom:
+    - kind: Secret
+      name: seeder-values
+      valuesKey: values.yaml
+    values:
+      global:
+        region: test
+        tld: cloud.sap
+        registry: keppel.eu-nl-1.cloud.sap/ccloud
+      keystone:
+        authUrl: "http://keystone.monsoon3.svc.cluster.local:5000"
+        identityApiVersion: 3
+        username: admin
+        userDomainId: default
+        projectName: admin
+        projectDomainId: default
+      sentry:
+        enabled: false
+      rbac:
+        enabled: true
+      ignoreNamespace: monsoon3global

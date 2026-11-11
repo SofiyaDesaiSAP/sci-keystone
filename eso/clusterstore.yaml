@@ -1,0 +1,19 @@
+---
+# ClusterSecretStore: connects External Secrets Operator to local HashiCorp Vault
+# Uses token auth (simple for test cluster).
+# The vault-token secret is created by: make vault-token-secret
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: vault-store
+spec:
+  provider:
+    vault:
+      server: "http://vault.vault.svc.cluster.local:8200"
+      path: "secrets"      # KV v2 mount name — matches 'make vault-enable-kv'
+      version: "v2"
+      auth:
+        tokenSecretRef:
+          namespace: vault
+          name: vault-token
+          key: token

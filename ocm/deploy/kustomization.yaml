@@ -1,0 +1,4 @@
+resources:
+  - namespace.yaml
+  - keystone-kro-rgd.yaml
+  - infra-kro-rgd.yaml

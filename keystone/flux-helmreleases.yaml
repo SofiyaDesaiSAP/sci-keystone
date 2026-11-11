@@ -1,0 +1,18 @@
+---
+# NOTE: The keystone HelmRelease has been removed from this file.
+# The keystone chart's secret-credential-keys.yaml renders integer YAML keys
+# (0:, 1:) which Flux cannot JSON-marshal. Deploy via:
+#   make -f Makefile.scikeystone keystone-helm-deploy
+#
+# This OCIRepository is kept for reference only; keystone-helm-deploy pulls
+# directly from the oci:// URL and does not use it.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: keystone-chart
+  namespace: monsoon3
+spec:
+  interval: 10m
+  url: oci://keppel.eu-nl-1.cloud.sap/ccloud-helm/keystone
+  ref:
+    tag: "0.13.2"

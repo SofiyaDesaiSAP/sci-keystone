@@ -1,0 +1,235 @@
+# DEPRECATED: Replaced by kro RGD pattern in ocm/deploy/infra-kro-rgd.yaml
+# (greenhouse architecture — new OCM k8s toolkit v0.19.1 API).
+# This file uses old ComponentVersion/Resource/FluxDeployer OCM controller v0.33.0 API.
+# Kept for reference. Use `make deploy-apply deploy-instance-infra` instead.
+#
+# OCM + Flux deployment manifests for infrastructure components
+# (Vault, External Secrets Operator, RabbitMQ)
+#
+# Flow per component:
+#   ComponentVersion  →  fetches + verifies signed component from GHCR
+#   Resource          →  extracts helmChart resource as local Snapshot
+#   FluxDeployer      →  creates OCIRepository from Snapshot + HelmRelease
+#
+# Deployment order: vault, eso, and rabbitmq start concurrently (no dependsOn between them).
+# RabbitMQ pods will fail to start until ESO syncs rabbitmq-secrets from Vault — this is
+# expected. Flux retries the HelmRelease; once the secret exists, pods start cleanly.
+#
+# Post-deploy manual steps still required (imperative operations):
+#   1. make vault-init vault-unseal vault-enable-kv vault-populate vault-token-secret
+#   2. make eso-apply-clusterstore eso-apply-externalsecrets
+#   Then Flux automatically completes rabbitmq + keystone deployments.
+
+# ─── Vault ────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: ComponentVersion
+metadata:
+  name: vault
+  namespace: monsoon3
+spec:
+  interval: 10m
+  component: ocm.software/sap/keystone/vault
+  version:
+    semver: ">=0.28.1"
+  repository:
+    url: ghcr.io/sofiyadesaisap/keystone-ctf
+    secretRef:
+      name: ghcr-creds
+  verify:
+  - name: keystone-sig
+    publicKey:
+      secretRef:
+        name: keystone-signing-pubkey
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: Resource
+metadata:
+  name: vault-chart
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: ComponentVersion
+    name: vault
+    namespace: monsoon3
+    resourceRef:
+      name: vault-chart
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: FluxDeployer
+metadata:
+  name: vault
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: Resource
+    name: vault-chart
+    namespace: monsoon3
+  helmReleaseTemplate:
+    interval: 5m
+    releaseName: vault
+    targetNamespace: vault
+    install:
+      timeout: 10m
+      crds: CreateReplace
+      createNamespace: true
+    upgrade:
+      timeout: 10m
+    values:
+      server:
+        standalone:
+          enabled: true
+        dataStorage:
+          enabled: true
+          storageClass: default
+        # In air-gated deployments, kro RGD sets image.repository to the local RBSC registry.
+        # Dev default (Docker Hub): hashicorp/vault:1.17.2
+        image:
+          repository: hashicorp/vault
+          tag: "1.17.2"
+      injector:
+        image:
+          repository: hashicorp/vault-k8s
+          tag: "1.4.2"
+      ui:
+        enabled: true
+
+# ─── External Secrets Operator ────────────────────────────────────────────────
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: ComponentVersion
+metadata:
+  name: eso
+  namespace: monsoon3
+spec:
+  interval: 10m
+  component: ocm.software/sap/keystone/eso
+  version:
+    semver: ">=0.10.7"
+  repository:
+    url: ghcr.io/sofiyadesaisap/keystone-ctf
+    secretRef:
+      name: ghcr-creds
+  verify:
+  - name: keystone-sig
+    publicKey:
+      secretRef:
+        name: keystone-signing-pubkey
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: Resource
+metadata:
+  name: eso-chart
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: ComponentVersion
+    name: eso
+    namespace: monsoon3
+    resourceRef:
+      name: eso-chart
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: FluxDeployer
+metadata:
+  name: eso
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: Resource
+    name: eso-chart
+    namespace: monsoon3
+  helmReleaseTemplate:
+    interval: 5m
+    releaseName: external-secrets
+    targetNamespace: external-secrets
+    install:
+      timeout: 10m
+      crds: CreateReplace
+      createNamespace: true
+    upgrade:
+      timeout: 10m
+    values:
+      installCRDs: true
+      # In air-gated deployments, kro RGD sets image.repository to the local RBSC registry.
+      # Dev default: oci.external-secrets.io/external-secrets/external-secrets:v0.10.7
+      image:
+        repository: oci.external-secrets.io/external-secrets/external-secrets
+        tag: "v0.10.7"
+
+# ─── RabbitMQ ─────────────────────────────────────────────────────────────────
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: ComponentVersion
+metadata:
+  name: rabbitmq
+  namespace: monsoon3
+spec:
+  interval: 10m
+  component: ocm.software/sap/keystone/rabbitmq
+  version:
+    semver: ">=1.1.0"
+  repository:
+    url: ghcr.io/sofiyadesaisap/keystone-ctf
+    secretRef:
+      name: ghcr-creds
+  verify:
+  - name: keystone-sig
+    publicKey:
+      secretRef:
+        name: keystone-signing-pubkey
+
+---
+apiVersion: delivery.ocm.software/v1alpha1
+kind: Resource
+metadata:
+  name: rabbitmq-chart
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: ComponentVersion
+    name: rabbitmq
+    namespace: monsoon3
+    resourceRef:
+      name: rabbitmq-chart
+
+---
+# RabbitMQ HelmRelease deploys to monsoon3 namespace.
+# Pods require rabbitmq-secrets K8s Secret (created by ESO from Vault).
+# Pods will fail until `make eso-apply-externalsecrets` runs; Flux self-heals on retry.
+apiVersion: delivery.ocm.software/v1alpha1
+kind: FluxDeployer
+metadata:
+  name: rabbitmq
+  namespace: monsoon3
+spec:
+  interval: 10m
+  sourceRef:
+    kind: Resource
+    name: rabbitmq-chart
+    namespace: monsoon3
+  helmReleaseTemplate:
+    interval: 5m
+    releaseName: rabbitmq
+    targetNamespace: monsoon3
+    install:
+      timeout: 5m
+    upgrade:
+      timeout: 5m
+    values:
+      # image: full image reference for the rabbitmq container.
+      # Chart default: rabbitmq:3.13-management (Docker Hub)
+      # In air-gated deployments, kro RGD sets this to the local RBSC registry path.
+      image: "rabbitmq:3.13-management"
