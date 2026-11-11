@@ -38,10 +38,9 @@ jobs:
 
   # ── Job 1: keystone application bundle ──────────────────────────────────────
   # Requires a self-hosted runner with network access to keppel.eu-nl-1.cloud.sap
-  # (SAP-internal registry). Replace 'self-hosted' with your runner label.
   build-keystone:
     name: Build and push keystone bundle
-    runs-on: self-hosted
+    runs-on: sap-keppel
 
     steps:
       - name: Checkout
@@ -174,10 +173,9 @@ jobs:
 
   # ── Job 2: prerequisites bundle (vault + eso + rabbitmq) ───────────────────
   # Requires a self-hosted runner with network access to keppel.eu-nl-1.cloud.sap
-  # (SAP-internal registry). Replace 'self-hosted' with your runner label.
   build-prerequisites:
     name: Build and push prerequisites bundle
-    runs-on: self-hosted
+    runs-on: sap-keppel
 
     steps:
       - name: Checkout
