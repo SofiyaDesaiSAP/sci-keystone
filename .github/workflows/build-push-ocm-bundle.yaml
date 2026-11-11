@@ -63,15 +63,6 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
-      - name: Pull keystone chart from Keppel
-        run: |
-          mkdir -p charts
-          helm pull oci://${KEPPEL_REGISTRY}/ccloud-helm/keystone \
-            --version "${KEYSTONE_VERSION}" \
-            --destination charts/
-          echo "Pulled keystone-${KEYSTONE_VERSION}.tgz"
-          wc -c charts/keystone-${KEYSTONE_VERSION}.tgz
-
       - name: Patch keystone chart (Chart.Version + integer keys)
         run: |
           TMPDIR=$(mktemp -d)
@@ -90,13 +81,6 @@ jobs:
           rm -rf $TMPDIR
           echo "Patched keystone-${KEYSTONE_VERSION}.tgz"
 
-      - name: Pull seeder chart from Keppel
-        run: |
-          helm pull oci://${KEPPEL_REGISTRY}/ccloud-helm/openstack-seeder \
-            --version "${SEEDER_VERSION}" \
-            --destination charts/
-          echo "Pulled openstack-seeder-${SEEDER_VERSION}.tgz"
-
       - name: Patch seeder chart (Chart.Version)
         run: |
           TMPDIR=$(mktemp -d)
@@ -108,6 +92,9 @@ jobs:
           helm package $TMPDIR/openstack-seeder --destination charts/
           rm -rf $TMPDIR
           echo "Patched openstack-seeder-${SEEDER_VERSION}.tgz"
+
+      - name: Expose charts to OCM (symlink repo-root charts/ into ocm/)
+        run: ln -sf "$(pwd)/charts" ocm/charts
 
       - name: Build keystone OCM bundle
         run: |
@@ -222,6 +209,9 @@ jobs:
             --version "${RABBITMQ_VERSION}"
           echo "Packaged rabbitmq-${RABBITMQ_VERSION}.tgz"
           wc -c charts/rabbitmq-${RABBITMQ_VERSION}.tgz
+
+      - name: Expose charts to OCM (symlink repo-root charts/ into ocm/)
+        run: ln -sf "$(pwd)/charts" ocm/charts
 
       - name: Build prerequisites OCM bundle
         run: |
