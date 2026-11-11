@@ -1,78 +1,278 @@
-name: Build and Push OCM Bundle
+name: Build and Push Keystone OCM Bundles
+
+# Builds and signs two OCM bundles (mirrors greenhouse naming convention):
+#   1. keystone-bundle       (keystone + seeder charts + all images from Keppel)
+#   2. prerequisites-bundle  (vault + eso + rabbitmq charts — keystone prerequisites)
+#
+# Both bundles are pushed to ghcr.io/<owner>/ with --copy-resources so all
+# referenced container images are transferred alongside the chart artifacts.
+#
+# Signing: keyless Sigstore OIDC (cosign + id-token: write).
+# Verify after push: ocm get componentversion on the live registry.
+#
+# Keppel (keppel.eu-nl-1.cloud.sap) provides anonymous read access for SAP charts.
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
-      - versions.env
-      - ocm/keystone-component.yaml
-      - charts/keystone-*.tgz
-      - charts/openstack-seeder-*.tgz
+      - 'ocm/keystone-component.yaml'
+      - 'ocm/infra-component.yaml'
+      - 'ocm/deploy/keystone-kro-rgd.yaml'
+      - 'ocm/deploy/infra-kro-rgd.yaml'
+      - 'versions.env'
+      - 'Makefile.scikeystone'
 
 permissions:
   contents: read
   packages: write
-  id-token: write  # required for keyless Sigstore signing
+  id-token: write   # required for keyless Sigstore OIDC signing
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  KEPPEL_REGISTRY: keppel.eu-nl-1.cloud.sap
 
 jobs:
-  build-push-keystone:
+
+  # ── Job 1: keystone application bundle ──────────────────────────────────────
+  build-keystone:
+    name: Build and push keystone bundle
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
 
       - name: Load versions
-        run: |
-          # Export every KEY=VALUE line from versions.env into GITHUB_ENV
-          grep -E '^[A-Z_]+=.+' versions.env >> "$GITHUB_ENV"
+        run: grep -v '^#' versions.env | grep -v '^$' >> $GITHUB_ENV
+
+      - name: Set up Helm
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
 
       - name: Install OCM CLI
         run: |
-          curl -sSfL \
-            "https://github.com/open-component-model/ocm/releases/download/${OCM_VERSION}/ocm-linux-amd64.tar.gz" \
-            | tar -xz -C /usr/local/bin ocm
+          OCM_VERSION_CLEAN="${OCM_VERSION#v}"
+          curl -fsSL "https://github.com/open-component-model/ocm/releases/download/${OCM_VERSION}/ocm-${OCM_VERSION_CLEAN}-linux-amd64.tar.gz" \
+            -o /tmp/ocm.tar.gz
+          tar xzf /tmp/ocm.tar.gz -C /tmp/
+          sudo mv /tmp/ocm /usr/local/bin/
           ocm version
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+
+      - name: Pull keystone chart from Keppel
+        run: |
+          mkdir -p charts
+          helm pull oci://${KEPPEL_REGISTRY}/ccloud-helm/keystone \
+            --version "${KEYSTONE_VERSION}" \
+            --destination charts/
+          echo "Pulled keystone-${KEYSTONE_VERSION}.tgz"
+          wc -c charts/keystone-${KEYSTONE_VERSION}.tgz
+
+      - name: Patch keystone chart (Chart.Version + integer keys)
+        run: |
+          TMPDIR=$(mktemp -d)
+          tar -xzf charts/keystone-${KEYSTONE_VERSION}.tgz -C $TMPDIR
+          # Fix Chart.Version references that produce semver with '+' (invalid OCI tag)
+          find $TMPDIR/keystone/templates -name "*.yaml" | xargs \
+            perl -pi -e \
+              's/\{\{[ ]*\.Chart\.Version[ ]*\}\}/{{ .Chart.Version | replace "+" "_" }}/g;
+               s/(printf "%s-%s" \.Chart\.Name \.Chart\.Version)([ ]*)\}\}/$1$2| replace "+" "_" }}/g'
+          # Fix integer YAML keys in secret-credential-keys.yaml (Flux cannot JSON-marshal bare ints)
+          if [ -f "$TMPDIR/keystone/templates/secret-credential-keys.yaml" ]; then
+            perl -pi -e 's/\{\{ \$key \}\}:/"{{ \$key }}":/g' \
+              $TMPDIR/keystone/templates/secret-credential-keys.yaml
+          fi
+          helm package $TMPDIR/keystone --destination charts/
+          rm -rf $TMPDIR
+          echo "Patched keystone-${KEYSTONE_VERSION}.tgz"
+
+      - name: Pull seeder chart from Keppel
+        run: |
+          helm pull oci://${KEPPEL_REGISTRY}/ccloud-helm/openstack-seeder \
+            --version "${SEEDER_VERSION}" \
+            --destination charts/
+          echo "Pulled openstack-seeder-${SEEDER_VERSION}.tgz"
+
+      - name: Patch seeder chart (Chart.Version)
+        run: |
+          TMPDIR=$(mktemp -d)
+          tar -xzf charts/openstack-seeder-${SEEDER_VERSION}.tgz -C $TMPDIR
+          find $TMPDIR/openstack-seeder/templates -name "*.yaml" | xargs \
+            perl -pi -e \
+              's/\{\{[ ]*\.Chart\.Version[ ]*\}\}/{{ .Chart.Version | replace "+" "_" }}/g;
+               s/(printf "%s-%s" \.Chart\.Name \.Chart\.Version)([ ]*)\}\}/$1$2| replace "+" "_" }}/g'
+          helm package $TMPDIR/openstack-seeder --destination charts/
+          rm -rf $TMPDIR
+          echo "Patched openstack-seeder-${SEEDER_VERSION}.tgz"
+
+      - name: Build keystone OCM bundle
+        run: |
+          ocm add componentversions \
+            --addenv \
+            --file keystone-bundle.ctf \
+            --create \
+            ocm/keystone-component.yaml \
+            KEYSTONE_VERSION=${KEYSTONE_VERSION} \
+            SEEDER_VERSION=${SEEDER_VERSION} \
+            KEYSTONE_IMAGE_TAG=${KEYSTONE_IMAGE_TAG} \
+            KEYSTONE_METRICS_IMAGE_TAG=${KEYSTONE_METRICS_IMAGE_TAG} \
+            PROXYSQL_IMAGE_TAG=${PROXYSQL_IMAGE_TAG} \
+            MARIADB_IMAGE_TAG=${MARIADB_IMAGE_TAG} \
+            MARIADB_POD_READINESS_TAG=${MARIADB_POD_READINESS_TAG} \
+            MARIADB_ALPINE_TAG=${MARIADB_ALPINE_TAG} \
+            MYSQLD_EXPORTER_TAG=${MYSQLD_EXPORTER_TAG} \
+            MEMCACHED_IMAGE_TAG=${MEMCACHED_IMAGE_TAG} \
+            MEMCACHED_EXPORTER_TAG=${MEMCACHED_EXPORTER_TAG} \
+            K8S_ENTRYPOINT_TAG=${K8S_ENTRYPOINT_TAG} \
+            SQL_EXPORTER_TAG=${SQL_EXPORTER_TAG} \
+            SEEDER_IMAGE_TAG=${SEEDER_IMAGE_TAG} \
+            ALPINE_KUBECTL_TAG=${ALPINE_KUBECTL_TAG} \
+            APACHE_EXPORTER_TAG=${APACHE_EXPORTER_TAG}
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build keystone OCM bundle
+      - name: Push keystone bundle to ghcr.io
         run: |
-          make -f Makefile.scikeystone build-keystone \
-            GITHUB_USER=${{ github.repository_owner }} \
-            KEYSTONE_VERSION=${{ env.KEYSTONE_VERSION }} \
-            SEEDER_VERSION=${{ env.SEEDER_VERSION }} \
-            KEYSTONE_IMAGE_TAG=${{ env.KEYSTONE_IMAGE_TAG }} \
-            KEYSTONE_METRICS_IMAGE_TAG=${{ env.KEYSTONE_METRICS_IMAGE_TAG }} \
-            PROXYSQL_IMAGE_TAG=${{ env.PROXYSQL_IMAGE_TAG }} \
-            MARIADB_IMAGE_TAG=${{ env.MARIADB_IMAGE_TAG }} \
-            MARIADB_POD_READINESS_TAG=${{ env.MARIADB_POD_READINESS_TAG }} \
-            MARIADB_ALPINE_TAG=${{ env.MARIADB_ALPINE_TAG }} \
-            MYSQLD_EXPORTER_TAG=${{ env.MYSQLD_EXPORTER_TAG }} \
-            MEMCACHED_IMAGE_TAG=${{ env.MEMCACHED_IMAGE_TAG }} \
-            MEMCACHED_EXPORTER_TAG=${{ env.MEMCACHED_EXPORTER_TAG }} \
-            K8S_ENTRYPOINT_TAG=${{ env.K8S_ENTRYPOINT_TAG }} \
-            SQL_EXPORTER_TAG=${{ env.SQL_EXPORTER_TAG }} \
-            SEEDER_IMAGE_TAG=${{ env.SEEDER_IMAGE_TAG }} \
-            ALPINE_KUBECTL_TAG=${{ env.ALPINE_KUBECTL_TAG }} \
-            APACHE_EXPORTER_TAG=${{ env.APACHE_EXPORTER_TAG }}
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          ocm transfer ctf \
+            --copy-resources \
+            keystone-bundle.ctf \
+            oci://ghcr.io/${OWNER}/keystone
 
-      - name: Push keystone OCM bundle to GHCR
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sign keystone component (keyless Sigstore)
         run: |
-          make -f Makefile.scikeystone push-keystone \
-            GITHUB_USER=${{ github.repository_owner }} \
-            KEYSTONE_VERSION=${{ env.KEYSTONE_VERSION }} \
-            SEEDER_VERSION=${{ env.SEEDER_VERSION }}
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          ocm sign componentversions \
+            --keyless \
+            --signature keystone-release \
+            --algorithm sigstore-v2 \
+            --repo oci://ghcr.io/${OWNER}/keystone \
+            ocm.software/sap/keystone:${KEYSTONE_VERSION}
 
-      - name: Sign keystone bundle (keyless Sigstore)
+      - name: Verify keystone bundle
         run: |
-          make -f Makefile.scikeystone sign-sigstore-keystone \
-            GITHUB_USER=${{ github.repository_owner }} \
-            KEYSTONE_VERSION=${{ env.KEYSTONE_VERSION }}
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          ocm get componentversion \
+            --repo oci://ghcr.io/${OWNER}/keystone \
+            ocm.software/sap/keystone:${KEYSTONE_VERSION}
+          ocm get componentversion \
+            --repo oci://ghcr.io/${OWNER}/keystone \
+            ocm.software/sap/keystone/core:${KEYSTONE_VERSION}
+
+  # ── Job 2: prerequisites bundle (vault + eso + rabbitmq) ───────────────────
+  build-prerequisites:
+    name: Build and push prerequisites bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Load versions
+        run: grep -v '^#' versions.env | grep -v '^$' >> $GITHUB_ENV
+
+      - name: Set up Helm
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
+
+      - name: Install OCM CLI
+        run: |
+          OCM_VERSION_CLEAN="${OCM_VERSION#v}"
+          curl -fsSL "https://github.com/open-component-model/ocm/releases/download/${OCM_VERSION}/ocm-${OCM_VERSION_CLEAN}-linux-amd64.tar.gz" \
+            -o /tmp/ocm.tar.gz
+          tar xzf /tmp/ocm.tar.gz -C /tmp/
+          sudo mv /tmp/ocm /usr/local/bin/
+          ocm version
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+
+      - name: Pull vault chart
+        run: |
+          mkdir -p charts
+          helm repo add hashicorp https://helm.releases.hashicorp.com 2>/dev/null || true
+          helm repo update
+          helm pull hashicorp/vault \
+            --version "${VAULT_VERSION}" \
+            --destination charts/
+          echo "Pulled vault-${VAULT_VERSION}.tgz"
+          wc -c charts/vault-${VAULT_VERSION}.tgz
+
+      - name: Pull external-secrets chart
+        run: |
+          helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true
+          helm repo update
+          helm pull external-secrets/external-secrets \
+            --version "${ESO_VERSION}" \
+            --destination charts/
+          echo "Pulled external-secrets-${ESO_VERSION}.tgz"
+
+      - name: Package rabbitmq chart
+        run: |
+          helm package rabbitmq/chart/ \
+            --destination charts/ \
+            --version "${RABBITMQ_VERSION}"
+          echo "Packaged rabbitmq-${RABBITMQ_VERSION}.tgz"
+          wc -c charts/rabbitmq-${RABBITMQ_VERSION}.tgz
+
+      - name: Build prerequisites OCM bundle
+        run: |
+          ocm add componentversions \
+            --addenv \
+            --file prerequisites-bundle.ctf \
+            --create \
+            ocm/infra-component.yaml \
+            VAULT_VERSION=${VAULT_VERSION} \
+            ESO_VERSION=${ESO_VERSION} \
+            RABBITMQ_VERSION=${RABBITMQ_VERSION} \
+            INFRA_VERSION=${INFRA_VERSION} \
+            VAULT_IMAGE_TAG=${VAULT_IMAGE_TAG} \
+            VAULT_INJECTOR_TAG=${VAULT_INJECTOR_TAG} \
+            ESO_IMAGE_TAG=${ESO_IMAGE_TAG} \
+            RABBITMQ_IMAGE_TAG=${RABBITMQ_IMAGE_TAG}
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push prerequisites bundle to ghcr.io
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          ocm transfer ctf \
+            --copy-resources \
+            prerequisites-bundle.ctf \
+            oci://ghcr.io/${OWNER}/keystone-prerequisites
+
+      - name: Sign prerequisites component (keyless Sigstore)
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          ocm sign componentversions \
+            --keyless \
+            --signature keystone-release \
+            --algorithm sigstore-v2 \
+            --repo oci://ghcr.io/${OWNER}/keystone-prerequisites \
+            ocm.software/sap/keystone/infra:${INFRA_VERSION}
+
+      - name: Verify prerequisites bundle
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          ocm get componentversion \
+            --repo oci://ghcr.io/${OWNER}/keystone-prerequisites \
+            ocm.software/sap/keystone/infra:${INFRA_VERSION}
+          ocm get componentversion \
+            --repo oci://ghcr.io/${OWNER}/keystone-prerequisites \
+            ocm.software/sap/keystone/infra/rabbitmq:${RABBITMQ_VERSION}
+          ocm get componentversion \
+            --repo oci://ghcr.io/${OWNER}/keystone-prerequisites \
+            ocm.software/sap/keystone/infra/eso:${ESO_VERSION}
