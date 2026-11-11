@@ -38,9 +38,14 @@ env:
 jobs:
 
   # ── Job 1: keystone application bundle ──────────────────────────────────────
+  # SKIPPED in GHCR testing mode — OCM resolves image digests from Keppel during
+  # `ocm add componentversions` (even without --copy-resources). All keystone images
+  # live on keppel.eu-nl-1.cloud.sap which is unreachable from GitHub-hosted runners.
+  # Restore this job when switching to sap-keppel self-hosted runner.
   build-keystone:
     name: Build and push keystone bundle
     runs-on: ubuntu-latest
+    if: false  # TODO: remove when self-hosted runner (sap-keppel) is ready
 
     steps:
       - name: Checkout
