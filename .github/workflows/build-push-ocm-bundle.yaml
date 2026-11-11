@@ -1,0 +1,78 @@
+name: Build and Push OCM Bundle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - versions.env
+      - ocm/keystone-component.yaml
+      - charts/keystone-*.tgz
+      - charts/openstack-seeder-*.tgz
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write  # required for keyless Sigstore signing
+
+jobs:
+  build-push-keystone:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load versions
+        run: |
+          # Export every KEY=VALUE line from versions.env into GITHUB_ENV
+          grep -E '^[A-Z_]+=.+' versions.env >> "$GITHUB_ENV"
+
+      - name: Install OCM CLI
+        run: |
+          curl -sSfL \
+            "https://github.com/open-component-model/ocm/releases/download/${OCM_VERSION}/ocm-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin ocm
+          ocm version
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build keystone OCM bundle
+        run: |
+          make -f Makefile.scikeystone build-keystone \
+            GITHUB_USER=${{ github.repository_owner }} \
+            KEYSTONE_VERSION=${{ env.KEYSTONE_VERSION }} \
+            SEEDER_VERSION=${{ env.SEEDER_VERSION }} \
+            KEYSTONE_IMAGE_TAG=${{ env.KEYSTONE_IMAGE_TAG }} \
+            KEYSTONE_METRICS_IMAGE_TAG=${{ env.KEYSTONE_METRICS_IMAGE_TAG }} \
+            PROXYSQL_IMAGE_TAG=${{ env.PROXYSQL_IMAGE_TAG }} \
+            MARIADB_IMAGE_TAG=${{ env.MARIADB_IMAGE_TAG }} \
+            MARIADB_POD_READINESS_TAG=${{ env.MARIADB_POD_READINESS_TAG }} \
+            MARIADB_ALPINE_TAG=${{ env.MARIADB_ALPINE_TAG }} \
+            MYSQLD_EXPORTER_TAG=${{ env.MYSQLD_EXPORTER_TAG }} \
+            MEMCACHED_IMAGE_TAG=${{ env.MEMCACHED_IMAGE_TAG }} \
+            MEMCACHED_EXPORTER_TAG=${{ env.MEMCACHED_EXPORTER_TAG }} \
+            K8S_ENTRYPOINT_TAG=${{ env.K8S_ENTRYPOINT_TAG }} \
+            SQL_EXPORTER_TAG=${{ env.SQL_EXPORTER_TAG }} \
+            SEEDER_IMAGE_TAG=${{ env.SEEDER_IMAGE_TAG }} \
+            ALPINE_KUBECTL_TAG=${{ env.ALPINE_KUBECTL_TAG }} \
+            APACHE_EXPORTER_TAG=${{ env.APACHE_EXPORTER_TAG }}
+
+      - name: Push keystone OCM bundle to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make -f Makefile.scikeystone push-keystone \
+            GITHUB_USER=${{ github.repository_owner }} \
+            KEYSTONE_VERSION=${{ env.KEYSTONE_VERSION }} \
+            SEEDER_VERSION=${{ env.SEEDER_VERSION }}
+
+      - name: Sign keystone bundle (keyless Sigstore)
+        run: |
+          make -f Makefile.scikeystone sign-sigstore-keystone \
+            GITHUB_USER=${{ github.repository_owner }} \
+            KEYSTONE_VERSION=${{ env.KEYSTONE_VERSION }}
