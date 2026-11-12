@@ -136,25 +136,22 @@ jobs:
             ALPINE_KUBECTL_TAG=${ALPINE_KUBECTL_TAG} \
             APACHE_EXPORTER_TAG=${APACHE_EXPORTER_TAG}
 
-      - name: Log in to JFrog Artifactory
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: common.repositories.cloud.sap
-          username: ${{ secrets.ARTIFACTORY_USER }}
-          password: ${{ secrets.ARTIFACTORY_TOKEN }}
+      - name: Configure registry credentials for OCM
+        run: |
+          mkdir -p ~/.docker
+          AUTH=$(echo -n "${{ secrets.ARTIFACTORY_USER }}:${{ secrets.ARTIFACTORY_TOKEN }}" | base64 -w 0)
+          printf '{"auths":{"common.repositories.cloud.sap":{"auth":"%s"}}}\n' "$AUTH" > ~/.docker/config.json
 
       - name: Push keystone bundle to central registry
-        env:
-          REGISTRY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
         run: |
-          REGISTRY_TOKEN=$REGISTRY_TOKEN ocm transfer ctf \
+          ocm transfer ctf \
             --copy-resources \
             keystone-bundle.ctf \
             oci://${CENTRAL_REGISTRY}
 
       - name: Sign keystone component in central registry (keyless Sigstore)
         run: |
-          REGISTRY_TOKEN=${{ secrets.ARTIFACTORY_TOKEN }} ocm sign componentversions \
+          ocm sign componentversions \
             --keyless \
             --signature keystone-release \
             --algorithm sigstore-v2 \
@@ -242,25 +239,22 @@ jobs:
             ESO_IMAGE_TAG=${ESO_IMAGE_TAG} \
             RABBITMQ_IMAGE_TAG=${RABBITMQ_IMAGE_TAG}
 
-      - name: Log in to JFrog Artifactory
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: common.repositories.cloud.sap
-          username: ${{ secrets.ARTIFACTORY_USER }}
-          password: ${{ secrets.ARTIFACTORY_TOKEN }}
+      - name: Configure registry credentials for OCM
+        run: |
+          mkdir -p ~/.docker
+          AUTH=$(echo -n "${{ secrets.ARTIFACTORY_USER }}:${{ secrets.ARTIFACTORY_TOKEN }}" | base64 -w 0)
+          printf '{"auths":{"common.repositories.cloud.sap":{"auth":"%s"}}}\n' "$AUTH" > ~/.docker/config.json
 
       - name: Push prerequisites bundle to central registry
-        env:
-          REGISTRY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
         run: |
-          REGISTRY_TOKEN=$REGISTRY_TOKEN ocm transfer ctf \
+          ocm transfer ctf \
             --copy-resources \
             prerequisites-bundle.ctf \
             oci://${CENTRAL_REGISTRY}
 
       - name: Sign prerequisites component in central registry (keyless Sigstore)
         run: |
-          REGISTRY_TOKEN=${{ secrets.ARTIFACTORY_TOKEN }} ocm sign componentversions \
+          ocm sign componentversions \
             --keyless \
             --signature keystone-release \
             --algorithm sigstore-v2 \
