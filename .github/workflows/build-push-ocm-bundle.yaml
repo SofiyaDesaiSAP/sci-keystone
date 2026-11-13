@@ -142,6 +142,16 @@ jobs:
           AUTH=$(echo -n "${{ secrets.ARTIFACTORY_USER }}:${{ secrets.ARTIFACTORY_TOKEN }}" | base64 -w 0)
           printf '{"auths":{"sci-ocm-bundles.common.repositories.cloud.sap":{"auth":"%s"}}}\n' "$AUTH" > ~/.docker/config.json
 
+      - name: Prime Keppel cache for Docker Hub mirror images
+        # ccloud-dockerhub-mirror images are multi-arch (manifest index). OCM resolves and
+        # stores the manifest index digest, then fetches it by digest during --copy-resources.
+        # Pulling by tag first ensures Keppel has the manifest index cached.
+        run: |
+          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG}
+          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG}
+          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/memcached:${MEMCACHED_IMAGE_TAG}
+          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}
+
       - name: Push keystone bundle to central registry
         run: |
           ocm transfer ctf \
