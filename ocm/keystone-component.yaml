@@ -79,7 +79,7 @@ components:
         version: "1.0.0"
         access:
           type: ociArtifact
-          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG}"
+          imageReference: "docker.io/library/mariadb:${MARIADB_IMAGE_TAG}"
 
       - name: mariadb-pod-readiness-image
         type: ociArtifact
@@ -100,21 +100,21 @@ components:
         version: "1.0.0"
         access:
           type: ociArtifact
-          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG}"
+          imageReference: "docker.io/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG}"
 
       - name: memcached-image
         type: ociArtifact
         version: "1.0.0"
         access:
           type: ociArtifact
-          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/library/memcached:${MEMCACHED_IMAGE_TAG}"
+          imageReference: "docker.io/library/memcached:${MEMCACHED_IMAGE_TAG}"
 
       - name: memcached-exporter-image
         type: ociArtifact
         version: "1.0.0"
         access:
           type: ociArtifact
-          imageReference: "keppel.eu-nl-1.cloud.sap/ccloud-dockerhub-mirror/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}"
+          imageReference: "docker.io/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}"
 
       - name: kubernetes-entrypoint-image
         type: ociArtifact
