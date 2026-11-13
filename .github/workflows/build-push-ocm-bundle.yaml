@@ -145,17 +145,22 @@ jobs:
       - name: Prime Keppel cache for Docker Hub mirror images
         # ccloud-dockerhub-mirror images are multi-arch (manifest index). OCM resolves and
         # stores the manifest index digest, then fetches it by digest during --copy-resources.
-        # Pulling by tag first ensures Keppel has the manifest index cached.
+        # Fetching the manifest by tag first ensures Keppel has the manifest index cached.
+        # Uses skopeo (daemonless) because ARC runners have no Docker socket.
         run: |
-          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG}
-          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG}
-          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/memcached:${MEMCACHED_IMAGE_TAG}
-          docker pull ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}
+          for IMAGE in \
+            ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG} \
+            ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG} \
+            ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/memcached:${MEMCACHED_IMAGE_TAG} \
+            ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/memcached-exporter:${MEMCACHED_EXPORTER_TAG}; do
+            skopeo inspect --raw docker://${IMAGE} > /dev/null && echo "Primed: ${IMAGE}"
+          done
 
       - name: Push keystone bundle to central registry
         run: |
           ocm transfer ctf \
             --copy-resources \
+            --overwrite \
             keystone-bundle.ctf \
             oci://${CENTRAL_REGISTRY}
 
@@ -225,7 +230,7 @@ jobs:
 
       - name: Package rabbitmq chart
         run: |
-          helm package rabbitmq/chart/ \
+          SOURCE_DATE_EPOCH=0 helm package rabbitmq/chart/ \
             --destination charts/ \
             --version "${RABBITMQ_VERSION}"
           echo "Packaged rabbitmq-${RABBITMQ_VERSION}.tgz"
@@ -259,6 +264,7 @@ jobs:
         run: |
           ocm transfer ctf \
             --copy-resources \
+            --overwrite \
             prerequisites-bundle.ctf \
             oci://${CENTRAL_REGISTRY}
 
