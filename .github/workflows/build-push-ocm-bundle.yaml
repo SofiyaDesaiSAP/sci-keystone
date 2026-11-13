@@ -160,7 +160,6 @@ jobs:
         run: |
           ocm transfer ctf \
             --copy-resources \
-            --overwrite \
             keystone-bundle.ctf \
             oci://${CENTRAL_REGISTRY}
 
@@ -264,7 +263,6 @@ jobs:
         run: |
           ocm transfer ctf \
             --copy-resources \
-            --overwrite \
             prerequisites-bundle.ctf \
             oci://${CENTRAL_REGISTRY}
 
