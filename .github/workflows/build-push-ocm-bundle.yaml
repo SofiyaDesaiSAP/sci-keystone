@@ -148,6 +148,7 @@ jobs:
         # Fetching the manifest by tag first ensures Keppel has the manifest index cached.
         # Uses skopeo (daemonless) because ARC runners have no Docker socket.
         run: |
+          sudo apt-get install -y --no-install-recommends skopeo
           for IMAGE in \
             ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/library/mariadb:${MARIADB_IMAGE_TAG} \
             ${KEPPEL_REGISTRY}/ccloud-dockerhub-mirror/prom/mysqld-exporter:${MYSQLD_EXPORTER_TAG} \
