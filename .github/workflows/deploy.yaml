@@ -1,0 +1,118 @@
+name: Transfer Keystone OCM Bundles to Keppel
+
+# Transfers signed OCM bundles from the central JFrog Artifactory registry to the
+# on-site Keppel registry, making them available to the air-gapped target cluster.
+#
+# Flow:
+#   JFrog Artifactory (sci-ocm-bundles.common.repositories.cloud.sap)
+#     → ocm transfer componentversion --copy-resources
+#   Keppel on-site (keppel.eu-nl-1.cloud.sap/release-management)
+#     → OCM controller on cluster picks up new version automatically
+#     → kro expands KeystoneStack/InfraStack CRs
+#     → Flux reconciles HelmReleases
+#
+# Triggers automatically after the CI build workflow succeeds on main,
+# or manually via workflow_dispatch for re-transfers.
+#
+# GitHub secrets required:
+#   ARTIFACTORY_USER    JFrog pull username
+#   ARTIFACTORY_TOKEN   JFrog pull token
+#   KEPPEL_USER         Keppel username  (I779118@monsoon3/release-management@monsoon3)
+#   KEPPEL_TOKEN        Keppel password (OpenStack password; app creds not supported by internal Keystone)
+#
+# GitHub Actions variable (Settings → Variables):
+#   ON_SITE_REGISTRY    sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+
+on:
+  workflow_run:
+    workflows:
+      - "Build and Push Keystone OCM Bundles"
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CENTRAL_REGISTRY: sci-ocm-bundles.common.repositories.cloud.sap
+
+jobs:
+
+  check-trigger:
+    name: Check trigger
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check upstream build result
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event.workflow_run.conclusion }}" == "success" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "Upstream build did not succeed (conclusion: ${{ github.event.workflow_run.conclusion }}), skipping transfer"
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+  transfer:
+    name: Transfer OCM bundles to Keppel
+    needs: check-trigger
+    if: needs.check-trigger.outputs.should_run == 'true'
+    runs-on: sap-keppel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+
+      - name: Load versions
+        run: grep -v '^#' versions.env | grep -v '^$' >> $GITHUB_ENV
+
+      - name: Install OCM CLI
+        run: |
+          OCM_VERSION_CLEAN="${OCM_VERSION#v}"
+          curl -fsSL "https://github.com/open-component-model/ocm/releases/download/${OCM_VERSION}/ocm-${OCM_VERSION_CLEAN}-linux-amd64.tar.gz" \
+            -o /tmp/ocm.tar.gz
+          tar xzf /tmp/ocm.tar.gz -C /tmp/
+          sudo mv /tmp/ocm /usr/local/bin/
+          ocm version
+
+      - name: Configure registry credentials
+        run: |
+          mkdir -p ~/.docker
+          JFROG_AUTH=$(echo -n "${{ secrets.ARTIFACTORY_USER }}:${{ secrets.ARTIFACTORY_TOKEN }}" | base64 -w 0)
+          KEPPEL_AUTH=$(echo -n "${{ secrets.KEPPEL_USER }}:${{ secrets.KEPPEL_TOKEN }}" | base64 -w 0)
+          printf '{"auths":{"%s":{"auth":"%s"},"%s":{"auth":"%s"}}}\n' \
+            "${CENTRAL_REGISTRY}" "${JFROG_AUTH}" \
+            "${{ vars.ON_SITE_REGISTRY }}" "${KEPPEL_AUTH}" > ~/.docker/config.json
+
+      - name: Transfer keystone bundle (JFrog → Keppel)
+        run: |
+          ocm transfer componentversion \
+            --copy-resources \
+            oci://${CENTRAL_REGISTRY}//ocm.software/sap/keystone:${KEYSTONE_VERSION} \
+            oci://${{ vars.ON_SITE_REGISTRY }}
+          ocm transfer componentversion \
+            --copy-resources \
+            oci://${CENTRAL_REGISTRY}//ocm.software/sap/keystone/core:${KEYSTONE_VERSION} \
+            oci://${{ vars.ON_SITE_REGISTRY }}
+
+      - name: Transfer infra bundle (JFrog → Keppel)
+        run: |
+          ocm transfer componentversion \
+            --copy-resources \
+            oci://${CENTRAL_REGISTRY}//ocm.software/sap/keystone/infra:${INFRA_VERSION} \
+            oci://${{ vars.ON_SITE_REGISTRY }}
+
+      - name: Verify bundles in Keppel
+        run: |
+          ocm get componentversion \
+            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            ocm.software/sap/keystone:${KEYSTONE_VERSION}
+          ocm get componentversion \
+            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            ocm.software/sap/keystone/infra:${INFRA_VERSION}

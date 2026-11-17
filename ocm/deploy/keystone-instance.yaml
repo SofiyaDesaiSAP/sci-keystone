@@ -5,11 +5,10 @@ metadata:
   namespace: monsoon3
 spec:
   # onSiteRegistry: OCI registry where keystone OCM bundle is stored.
-  # For GHCR staging: ghcr.io/<owner>/keystone
-  # After `ocm transfer ctf --copy-resources keystone-bundle.ctf oci://rbsc.<site>/keystone`:
-  #   onSiteRegistry: rbsc.<site>/keystone
-  onSiteRegistry: ghcr.io/sofiyadesaisap/keystone
-  registrySecretName: local-registry-creds
+  # deploy-cluster.sh substitutes <on-site-keystone-registry> at deploy time.
+  # Example: sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+  onSiteRegistry: <on-site-keystone-registry>
+  registrySecretName: keystone-ocm-registry-creds
   componentVersion: ">=0.13.3"
   valuesSecretName: keystone-helm-values
   seederValuesSecretName: seeder-values

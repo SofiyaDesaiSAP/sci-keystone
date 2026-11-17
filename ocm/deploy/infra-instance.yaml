@@ -5,10 +5,10 @@ metadata:
   namespace: monsoon3
 spec:
   # onSiteRegistry: OCI registry where prerequisites OCM bundle is stored.
-  # For GHCR staging: ghcr.io/<owner>/keystone-prerequisites
-  # After transfer to on-site: rbsc.<site>/keystone-prerequisites
-  onSiteRegistry: ghcr.io/sofiyadesaisap/keystone-prerequisites
-  registrySecretName: local-registry-creds
+  # deploy-cluster.sh substitutes <on-site-infra-registry> at deploy time.
+  # Example: sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+  onSiteRegistry: <on-site-infra-registry>
+  registrySecretName: keystone-ocm-registry-creds
   componentVersion: ">=1.0.0"
   enableVault: true
   enableEso: true
