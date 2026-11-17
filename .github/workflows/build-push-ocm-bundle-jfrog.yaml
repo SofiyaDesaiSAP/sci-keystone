@@ -16,18 +16,18 @@ name: Build and Push Keystone OCM Bundles
 # Requires self-hosted runner (sap-keppel) with access to keppel.eu-nl-1.cloud.sap.
 # GitHub secrets required: ARTIFACTORY_USER, ARTIFACTORY_TOKEN
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'ocm/keystone-component.yaml'
-      - 'ocm/infra-component.yaml'
-      - 'ocm/deploy/keystone-kro-rgd.yaml'
-      - 'ocm/deploy/infra-kro-rgd.yaml'
-      - 'versions.env'
-      - 'Makefile.scikeystone'
+# on:
+  # workflow_dispatch:
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'ocm/keystone-component.yaml'
+  #     - 'ocm/infra-component.yaml'
+  #     - 'ocm/deploy/keystone-kro-rgd.yaml'
+  #     - 'ocm/deploy/infra-kro-rgd.yaml'
+  #     - 'versions.env'
+  #     - 'Makefile.scikeystone'
 
 permissions:
   contents: read
