@@ -150,9 +150,8 @@ jobs:
 
       - name: Configure registry credentials for OCM
         run: |
-          mkdir -p ~/.docker
-          AUTH=$(echo -n "${{ secrets.KEPPEL_USER }}:${{ secrets.KEPPEL_TOKEN }}" | base64 -w 0)
-          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "${{ vars.ON_SITE_REGISTRY }}" "${AUTH}" > ~/.docker/config.json
+          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${{ vars.ON_SITE_REGISTRY }}" \
+            -u "${{ secrets.KEPPEL_USER }}" --password-stdin
 
       - name: Push keystone bundle to on-site Keppel registry
         run: |
@@ -253,9 +252,8 @@ jobs:
 
       - name: Configure registry credentials for OCM
         run: |
-          mkdir -p ~/.docker
-          AUTH=$(echo -n "${{ secrets.KEPPEL_USER }}:${{ secrets.KEPPEL_TOKEN }}" | base64 -w 0)
-          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "${{ vars.ON_SITE_REGISTRY }}" "${AUTH}" > ~/.docker/config.json
+          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${{ vars.ON_SITE_REGISTRY }}" \
+            -u "${{ secrets.KEPPEL_USER }}" --password-stdin
 
       - name: Push prerequisites bundle to on-site Keppel registry
         run: |

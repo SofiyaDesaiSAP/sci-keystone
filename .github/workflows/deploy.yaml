@@ -83,12 +83,10 @@ jobs:
 
       - name: Configure registry credentials
         run: |
-          mkdir -p ~/.docker
-          JFROG_AUTH=$(echo -n "${{ secrets.ARTIFACTORY_USER }}:${{ secrets.ARTIFACTORY_TOKEN }}" | base64 -w 0)
-          KEPPEL_AUTH=$(echo -n "${{ secrets.KEPPEL_USER }}:${{ secrets.KEPPEL_TOKEN }}" | base64 -w 0)
-          printf '{"auths":{"%s":{"auth":"%s"},"%s":{"auth":"%s"}}}\n' \
-            "${CENTRAL_REGISTRY}" "${JFROG_AUTH}" \
-            "${{ vars.ON_SITE_REGISTRY }}" "${KEPPEL_AUTH}" > ~/.docker/config.json
+          echo "${{ secrets.ARTIFACTORY_TOKEN }}" | docker login "${CENTRAL_REGISTRY}" \
+            -u "${{ secrets.ARTIFACTORY_USER }}" --password-stdin
+          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${{ vars.ON_SITE_REGISTRY }}" \
+            -u "${{ secrets.KEPPEL_USER }}" --password-stdin
 
       - name: Transfer keystone bundle (JFrog → Keppel)
         run: |
