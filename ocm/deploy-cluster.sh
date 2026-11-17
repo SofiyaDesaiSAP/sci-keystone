@@ -13,9 +13,9 @@
 # REQUIRED environment variables:
 #   KUBECONFIG                    Path to the target cluster kubeconfig
 #   ON_SITE_KEYSTONE_REGISTRY     OCI registry holding the keystone OCM bundle
-#                                 Example: sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+#                                 Example: keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
 #   ON_SITE_INFRA_REGISTRY        OCI registry holding the infra OCM bundle
-#                                 Example: sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+#                                 Example: keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
 #   KEYSTONE_VALUES_YAML          Path to keystone Helm values file
 #   SEEDER_VALUES_YAML            Path to openstack-seeder Helm values file
 #

@@ -27,7 +27,7 @@ name: Build and Push Keystone OCM Bundles
 #   KEPPEL_TOKEN   Keppel service account token     (ticket: SCI dashboard)
 #
 # GitHub Actions variable (Settings → Variables):
-#   ON_SITE_REGISTRY    sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+#   ON_SITE_REGISTRY    keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
 
 on:
   workflow_dispatch:

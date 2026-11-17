@@ -6,7 +6,7 @@ metadata:
 spec:
   # onSiteRegistry: OCI registry where prerequisites OCM bundle is stored.
   # deploy-cluster.sh substitutes <on-site-infra-registry> at deploy time.
-  # Example: sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+  # Example: keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
   onSiteRegistry: <on-site-infra-registry>
   registrySecretName: keystone-ocm-registry-creds
   componentVersion: ">=1.0.0"

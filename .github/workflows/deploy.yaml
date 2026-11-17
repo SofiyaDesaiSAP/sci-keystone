@@ -21,7 +21,7 @@ name: Transfer Keystone OCM Bundles to Keppel
 #   KEPPEL_TOKEN        Keppel password (OpenStack password; app creds not supported by internal Keystone)
 #
 # GitHub Actions variable (Settings → Variables):
-#   ON_SITE_REGISTRY    keppel.eu-nl-1.cloud.sap/sci-ocm-bundles-keppel
+#   ON_SITE_REGISTRY    keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
 
 on:
   workflow_run:
