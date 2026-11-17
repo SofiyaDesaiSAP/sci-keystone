@@ -17,11 +17,11 @@ name: Transfer Keystone OCM Bundles to Keppel
 # GitHub secrets required:
 #   ARTIFACTORY_USER    JFrog pull username
 #   ARTIFACTORY_TOKEN   JFrog pull token
-#   KEPPEL_USER         Keppel username  (I779118@monsoon3/release-management@monsoon3)
+#   KEPPEL_USER         Keppel username  (i779118@monsoon3/release-management)
 #   KEPPEL_TOKEN        Keppel password (OpenStack password; app creds not supported by internal Keystone)
 #
 # GitHub Actions variable (Settings → Variables):
-#   ON_SITE_REGISTRY    sci-ocm-bundles-keppel.keppel.eu-nl-1.cloud.sap
+#   ON_SITE_REGISTRY    keppel.eu-nl-1.cloud.sap/sci-ocm-bundles-keppel
 
 on:
   workflow_run:
@@ -85,7 +85,9 @@ jobs:
         run: |
           echo "${{ secrets.ARTIFACTORY_TOKEN }}" | docker login "${CENTRAL_REGISTRY}" \
             -u "${{ secrets.ARTIFACTORY_USER }}" --password-stdin
-          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${{ vars.ON_SITE_REGISTRY }}" \
+          KEPPEL_HOST="${{ vars.ON_SITE_REGISTRY }}"
+          KEPPEL_HOST="${KEPPEL_HOST%%/*}"
+          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${KEPPEL_HOST}" \
             -u "${{ secrets.KEPPEL_USER }}" --password-stdin
 
       - name: Transfer keystone bundle (JFrog → Keppel)
