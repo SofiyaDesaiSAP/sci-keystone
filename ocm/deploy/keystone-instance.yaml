@@ -12,3 +12,4 @@ spec:
   componentVersion: ">=0.13.3"
   valuesSecretName: keystone-helm-values
   seederValuesSecretName: seeder-values
+  suspend: false   # set to true to gate upgrades; patch to false to release

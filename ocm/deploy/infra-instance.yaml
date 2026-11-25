@@ -13,3 +13,4 @@ spec:
   enableVault: true
   enableEso: true
   enableRabbitmq: true
+  suspend: false   # set to true to gate upgrades; patch to false to release

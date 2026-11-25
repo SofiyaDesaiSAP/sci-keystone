@@ -38,6 +38,9 @@ spec:
       valuesSecretName: "string"
       # seederValuesSecretName: K8s Secret (key: values.yaml) with openstack-seeder values.
       seederValuesSecretName: "string"
+      # suspend: when true, all HelmReleases and OCIRepositories are suspended (manual gate).
+      # Set to false to allow Flux to deploy/upgrade. Default: false.
+      suspend: "boolean"
     status:
       keystoneReady: "${keystoneHR.status.conditions[0].status}"
 
@@ -107,6 +110,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 10m
+        suspend: "${schema.spec.suspend}"
         url: "oci://${keystoneChartResource.status.additional.oci.registry}/${keystoneChartResource.status.additional.oci.repository}"
         ref:
           digest: "${keystoneChartResource.status.additional.oci.digest}"
@@ -126,6 +130,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 5m
+        suspend: "${schema.spec.suspend}"
         releaseName: keystone
         chartRef:
           kind: OCIRepository
@@ -189,6 +194,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 10m
+        suspend: "${schema.spec.suspend}"
         url: "oci://${seederChartResource.status.additional.oci.registry}/${seederChartResource.status.additional.oci.repository}"
         ref:
           digest: "${seederChartResource.status.additional.oci.digest}"
@@ -209,6 +215,7 @@ spec:
       spec:
         interval: 10m
         releaseName: openstack-seeder
+        suspend: "${schema.spec.suspend}"
         chartRef:
           kind: OCIRepository
           name: "${seederOCIRepo.metadata.name}"

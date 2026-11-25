@@ -1,27 +1,27 @@
 name: Transfer Keystone OCM Bundles to Keppel
 
-# Transfers signed OCM bundles from the central JFrog Artifactory registry to the
-# on-site Keppel registry, making them available to the air-gapped target cluster.
+# CD: Transfers signed OCM bundles from JFrog Artifactory to the on-site Keppel registry.
+# Runs on a self-hosted runner (sap-keppel) inside the air-gapped environment that has
+# access to both JFrog (outbound) and Keppel (internal).
 #
 # Flow:
 #   JFrog Artifactory (sci-ocm-bundles.common.repositories.cloud.sap)
 #     → ocm transfer componentversion --copy-resources
-#   Keppel on-site (keppel.eu-nl-1.cloud.sap/release-management)
+#   Keppel on-site (keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management)
 #     → OCM controller on cluster picks up new version automatically
 #     → kro expands KeystoneStack/InfraStack CRs
 #     → Flux reconciles HelmReleases
 #
-# Triggers automatically after the CI build workflow succeeds on main,
-# or manually via workflow_dispatch for re-transfers.
+# Triggers automatically after CI build succeeds on main, or manually via workflow_dispatch.
 #
 # GitHub secrets required:
-#   ARTIFACTORY_USER    JFrog pull username
-#   ARTIFACTORY_TOKEN   JFrog pull token
-#   KEPPEL_USER         Keppel username  (i779118@monsoon3/release-management)
-#   KEPPEL_TOKEN        Keppel password (OpenStack password; app creds not supported by internal Keystone)
+#   ARTIFACTORY_USER   JFrog pull username
+#   ARTIFACTORY_TOKEN  JFrog pull token
+#   KEPPEL_USER        Keppel username  (i779118@monsoon3/release-management)
+#   KEPPEL_TOKEN       Keppel password
 #
 # GitHub Actions variable (Settings → Variables):
-#   ON_SITE_REGISTRY    keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
+#   ON_SITE_REGISTRY   keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
 
 on:
   workflow_run:

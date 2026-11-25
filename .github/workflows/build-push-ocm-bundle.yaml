@@ -1,33 +1,18 @@
 name: Build and Push Keystone OCM Bundles
 
-# Builds and signs two OCM bundles directly to the on-site Keppel OCI registry,
-# making the cluster truly air-gapped (cluster only ever talks to Keppel):
+# CI: Builds two OCM bundles and pushes them to the central JFrog Artifactory registry.
+# CD is handled separately by deploy.yaml which runs in the air-gapped environment.
+#
+# Bundles:
 #   1. keystone-bundle       (keystone + seeder charts + all images)
-#   2. prerequisites-bundle  (vault + eso + rabbitmq charts)
+#   2. prerequisites-bundle  (cert-manager, flux, kro, ocm-controller + vault, eso, rabbitmq)
 #
-# Both bundles push to the same Keppel project. OCM separates them by component
-# name path within that project:
-#   keppel.eu-nl-1.cloud.sap/monsoon3/release-management/ocm.software/sap/keystone
-#   keppel.eu-nl-1.cloud.sap/monsoon3/release-management/ocm.software/sap/keystone/infra
-#
-# Flow per bundle:
-#   pull charts from keppel.eu-nl-1.cloud.sap (source, read-only)
-#   → ocm add componentversions (build CTF locally)
-#   → ocm transfer ctf --copy-resources → on-site Keppel (push all charts + images)
-#   → ocm sign componentversions (keyless Sigstore, signs on Keppel)
-#   → ocm get componentversion (verify)
-#
-# After this workflow runs, the target cluster's OCM controller points its
-# Repository CR at Keppel and never needs to reach Artifactory or the internet.
-#
-# Requires self-hosted runner (sap-keppel) with read access to keppel.eu-nl-1.cloud.sap.
+# Central registry (JFrog Artifactory):
+#   sci-ocm-bundles.common.repositories.cloud.sap
 #
 # GitHub secrets required:
-#   KEPPEL_USER    Keppel service account username  (ticket: SCI dashboard)
-#   KEPPEL_TOKEN   Keppel service account token     (ticket: SCI dashboard)
-#
-# GitHub Actions variable (Settings → Variables):
-#   ON_SITE_REGISTRY    keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management
+#   ARTIFACTORY_USER   JFrog push username
+#   ARTIFACTORY_TOKEN  JFrog push token
 
 on:
   workflow_dispatch:
@@ -47,7 +32,8 @@ permissions:
   id-token: write   # required for keyless Sigstore OIDC signing
 
 env:
-  KEPPEL_REGISTRY: keppel.eu-nl-1.cloud.sap   # source: pull charts + images during build (read-only)
+  KEPPEL_REGISTRY: keppel.eu-nl-1.cloud.sap        # source: pull charts during build (read-only)
+  CENTRAL_REGISTRY: sci-ocm-bundles.common.repositories.cloud.sap
 
 jobs:
 
@@ -148,34 +134,31 @@ jobs:
             ALPINE_KUBECTL_TAG=${ALPINE_KUBECTL_TAG} \
             APACHE_EXPORTER_TAG=${APACHE_EXPORTER_TAG}
 
-      - name: Configure registry credentials for OCM
+      - name: Push keystone bundle to JFrog
         run: |
-          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${{ vars.ON_SITE_REGISTRY }}" \
-            -u "${{ secrets.KEPPEL_USER }}" --password-stdin
-
-      - name: Push keystone bundle to on-site Keppel registry
-        run: |
+          echo "${{ secrets.ARTIFACTORY_TOKEN }}" | docker login "${CENTRAL_REGISTRY}" \
+            -u "${{ secrets.ARTIFACTORY_USER }}" --password-stdin
           ocm transfer ctf \
             --copy-resources \
             keystone-bundle.ctf \
-            oci://${{ vars.ON_SITE_REGISTRY }}
+            oci://${CENTRAL_REGISTRY}
 
-      - name: Sign keystone component in on-site Keppel (keyless Sigstore)
+      - name: Sign keystone component in JFrog (keyless Sigstore)
         run: |
           ocm sign componentversions \
             --keyless \
             --signature keystone-release \
             --algorithm sigstore-v2 \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            --repo oci://${CENTRAL_REGISTRY} \
             ocm.software/sap/keystone:${KEYSTONE_VERSION}
 
-      - name: Verify keystone bundle in on-site Keppel
+      - name: Verify keystone bundle in JFrog
         run: |
           ocm get componentversion \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            --repo oci://${CENTRAL_REGISTRY} \
             ocm.software/sap/keystone:${KEYSTONE_VERSION}
           ocm get componentversion \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            --repo oci://${CENTRAL_REGISTRY} \
             ocm.software/sap/keystone/core:${KEYSTONE_VERSION}
 
   # ── Job 2: prerequisites bundle (vault + eso + rabbitmq) ───────────────────
@@ -248,37 +231,32 @@ jobs:
             VAULT_IMAGE_TAG=${VAULT_IMAGE_TAG} \
             VAULT_INJECTOR_TAG=${VAULT_INJECTOR_TAG} \
             ESO_IMAGE_TAG=${ESO_IMAGE_TAG} \
-            RABBITMQ_IMAGE_TAG=${RABBITMQ_IMAGE_TAG}
+            RABBITMQ_IMAGE_TAG=${RABBITMQ_IMAGE_TAG} \
+            CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION} \
+            FLUX_VERSION=${FLUX_VERSION} \
+            KRO_VERSION=${KRO_VERSION} \
+            OCM_CONTROLLER_VERSION=${OCM_CONTROLLER_VERSION}
 
-      - name: Configure registry credentials for OCM
+      - name: Push prerequisites bundle to JFrog
         run: |
-          echo "${{ secrets.KEPPEL_TOKEN }}" | docker login "${{ vars.ON_SITE_REGISTRY }}" \
-            -u "${{ secrets.KEPPEL_USER }}" --password-stdin
-
-      - name: Push prerequisites bundle to on-site Keppel registry
-        run: |
+          echo "${{ secrets.ARTIFACTORY_TOKEN }}" | docker login "${CENTRAL_REGISTRY}" \
+            -u "${{ secrets.ARTIFACTORY_USER }}" --password-stdin
           ocm transfer ctf \
             --copy-resources \
             prerequisites-bundle.ctf \
-            oci://${{ vars.ON_SITE_REGISTRY }}
+            oci://${CENTRAL_REGISTRY}
 
-      - name: Sign prerequisites component in on-site Keppel (keyless Sigstore)
+      - name: Sign prerequisites component in JFrog (keyless Sigstore)
         run: |
           ocm sign componentversions \
             --keyless \
             --signature keystone-release \
             --algorithm sigstore-v2 \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            --repo oci://${CENTRAL_REGISTRY} \
             ocm.software/sap/keystone/infra:${INFRA_VERSION}
 
-      - name: Verify prerequisites bundle in on-site Keppel
+      - name: Verify prerequisites bundle in JFrog
         run: |
           ocm get componentversion \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
+            --repo oci://${CENTRAL_REGISTRY} \
             ocm.software/sap/keystone/infra:${INFRA_VERSION}
-          ocm get componentversion \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
-            ocm.software/sap/keystone/infra/rabbitmq:${RABBITMQ_VERSION}
-          ocm get componentversion \
-            --repo oci://${{ vars.ON_SITE_REGISTRY }} \
-            ocm.software/sap/keystone/infra/eso:${ESO_VERSION}

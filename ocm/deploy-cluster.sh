@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # deploy-cluster.sh — Deploy keystone from scratch on a Kubernetes cluster.
 #
-# Target clusters are assumed to have Flux, kro, cert-manager, and the OCM
-# controller already installed (via GreenhouseBootstrap). This script only
-# handles namespace/secret setup, kro RGD application, and stack instance
-# deployment.
+# Assumes cert-manager, OCM controller, Flux, and kro are already installed.
+# On personal Gardener shoot clusters install them once with:
+#   make -f Makefile.scikeystone bootstrap
+# On Greenhouse-managed clusters they are pre-installed by the platform team.
+#
+# The OCM bundles (keystone + infra) must already be present in ON_SITE_REGISTRY
+# before running this script. Run the GitHub Actions workflows first:
+#   1. build-push-ocm-bundle.yaml  →  pushes bundles to JFrog
+#   2. deploy.yaml                 →  transfers JFrog → Keppel (ON_SITE_REGISTRY)
 #
 # RUN FROM THE REPO ROOT:
 #   cd /path/to/sci-keystone
@@ -63,7 +68,6 @@ done
 TMP=$(mktemp -d)
 trap 'rm -rf "${TMP}"' EXIT
 
-# Export OCM registry credentials when provided.
 [[ -n "${REGISTRY_TOKEN}" ]] && export OCM_REGISTRY_CREDS="${REGISTRY_USER}:${REGISTRY_TOKEN}"
 
 ok "All checks passed"
@@ -88,7 +92,6 @@ done
 
 # ── Step 3: Create registry pull secret ───────────────────────────────────────
 step "Step 3 — Creating registry pull secret"
-
 if [[ -n "${REGISTRY_TOKEN}" ]]; then
   REGISTRY_HOST="${ON_SITE_KEYSTONE_REGISTRY%%/*}"
   for ns in monsoon3 vault external-secrets; do
@@ -106,7 +109,6 @@ fi
 
 # ── Step 4: Apply stub CRDs ────────────────────────────────────────────────────
 step "Step 4 — Applying stub CRDs"
-# These stub CRDs must be present before Helm charts are deployed.
 # openstackseed: required by keystone chart; prometheusrule/sentryproject: avoid
 # admission webhook failures; priority-classes: required scheduling guarantees.
 kubectl apply -f crds/
@@ -119,9 +121,7 @@ kubectl apply -k ocm/deploy/
 echo "Waiting for KeystoneStack and InfraStack CRDs (kro processes RGDs)..."
 for crd in keystonestacks.kro.run infrastacks.kro.run; do
   echo "  waiting for CRD ${crd} to appear..."
-  until kubectl get crd "${crd}" >/dev/null 2>&1; do
-    sleep 3
-  done
+  until kubectl get crd "${crd}" >/dev/null 2>&1; do sleep 3; done
   kubectl wait --for=condition=Established crd/"${crd}" --timeout=60s
   echo "  ✓ ${crd}"
 done
@@ -138,24 +138,18 @@ kubectl annotate ocirepository --all -n monsoon3 \
   reconcile.fluxcd.io/requestedAt="$(date +%s)" --overwrite 2>/dev/null || true
 
 echo "Waiting for vault HelmRelease (up to 8m)..."
-kubectl wait helmrelease/vault \
-  --namespace vault \
-  --for=condition=Ready \
-  --timeout=480s
+kubectl wait helmrelease/vault --namespace vault \
+  --for=condition=Ready --timeout=480s
 ok "vault ready"
 
 echo "Waiting for external-secrets HelmRelease (up to 8m)..."
-kubectl wait helmrelease/external-secrets \
-  --namespace external-secrets \
-  --for=condition=Ready \
-  --timeout=480s
+kubectl wait helmrelease/external-secrets --namespace external-secrets \
+  --for=condition=Ready --timeout=480s
 ok "external-secrets ready"
 
 echo "Waiting for rabbitmq HelmRelease (up to 8m)..."
-kubectl wait helmrelease/rabbitmq \
-  --namespace monsoon3 \
-  --for=condition=Ready \
-  --timeout=480s
+kubectl wait helmrelease/rabbitmq --namespace monsoon3 \
+  --for=condition=Ready --timeout=480s
 ok "rabbitmq ready"
 
 # ── Step 7: Create keystone values secrets ────────────────────────────────────
@@ -186,23 +180,18 @@ ok "HelmRelease/keystone created"
 
 # ── Step 9: Wait for keystone HelmRelease ────────────────────────────────────
 step "Step 9 — Waiting for keystone HelmRelease (up to 15m)"
-
 if ! kubectl wait helmrelease/keystone -n monsoon3 \
     --for=condition=Ready --timeout=480s 2>/dev/null; then
   HR_REASON=$(kubectl get helmrelease keystone -n monsoon3 \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}' 2>/dev/null || echo "")
   echo "HelmRelease not ready (reason: ${HR_REASON}) — checking if retry is needed..."
-
   if [[ "${HR_REASON}" == "InstallFailed" || "${HR_REASON}" == "UpgradeFailed" ]]; then
     echo "Forcing HelmRelease retry via suspend+unsuspend..."
-    kubectl patch helmrelease keystone -n monsoon3 \
-      --type=merge -p '{"spec":{"suspend":true}}'
+    kubectl patch helmrelease keystone -n monsoon3 --type=merge -p '{"spec":{"suspend":true}}'
     sleep 5
-    kubectl patch helmrelease keystone -n monsoon3 \
-      --type=merge -p '{"spec":{"suspend":false}}'
+    kubectl patch helmrelease keystone -n monsoon3 --type=merge -p '{"spec":{"suspend":false}}'
     echo "Waiting for HelmRelease retry (up to 8m)..."
-    kubectl wait helmrelease/keystone -n monsoon3 \
-      --for=condition=Ready --timeout=480s
+    kubectl wait helmrelease/keystone -n monsoon3 --for=condition=Ready --timeout=480s
   else
     kubectl describe helmrelease keystone -n monsoon3 | tail -20
     die "HelmRelease/keystone not ready (reason: ${HR_REASON})"

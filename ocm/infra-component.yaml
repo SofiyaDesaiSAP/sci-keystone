@@ -1,9 +1,11 @@
-# OCM component descriptor — keystone prerequisites bundle (vault + eso + rabbitmq).
-# Mirrors ocm-greenhouse/prerequisites-component.yaml (greenhouse architecture).
+# OCM component descriptor — keystone prerequisites bundle.
+# Includes platform bootstrap tools (cert-manager, flux, kro, ocm-controller)
+# and application prerequisites (vault, eso, rabbitmq).
 #
 # Variables resolved by `ocm add componentversions --addenv ... KEY=VALUE`:
 #   VAULT_VERSION    ESO_VERSION    RABBITMQ_VERSION    INFRA_VERSION
 #   VAULT_IMAGE_TAG    VAULT_INJECTOR_TAG    ESO_IMAGE_TAG    RABBITMQ_IMAGE_TAG
+#   CERT_MANAGER_VERSION    FLUX_VERSION    KRO_VERSION    OCM_CONTROLLER_VERSION
 #
 # Charts must be prepared first: make chart-prepare-vault chart-prepare-eso chart-prepare-rabbitmq
 # Build:  make build-prerequisites
@@ -97,6 +99,74 @@ components:
           imageReference: "rabbitmq:${RABBITMQ_IMAGE_TAG}"
 
 
+  # ─── cert-manager ─────────────────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/cert-manager
+    version: ${CERT_MANAGER_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: cert-manager
+    resources:
+      - name: cert-manager-chart
+        type: helmChart
+        version: ${CERT_MANAGER_VERSION}
+        access:
+          type: ociArtifact
+          imageReference: "ghcr.io/cloudoperators/greenhouse-extensions/charts/cert-manager:${CERT_MANAGER_VERSION}"
+
+
+  # ─── Flux ─────────────────────────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/flux
+    version: ${FLUX_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: flux
+    resources:
+      - name: flux-chart
+        type: helmChart
+        version: ${FLUX_VERSION}
+        access:
+          type: ociArtifact
+          imageReference: "ghcr.io/fluxcd-community/charts/flux2:${FLUX_VERSION}"
+
+
+  # ─── kro ──────────────────────────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/kro
+    version: ${KRO_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: kro
+    resources:
+      - name: kro-chart
+        type: helmChart
+        version: ${KRO_VERSION}
+        access:
+          type: ociArtifact
+          imageReference: "registry.k8s.io/kro/charts/kro:${KRO_VERSION}"
+
+
+  # ─── OCM controller ───────────────────────────────────────────────────────────
+  - name: ocm.software/sap/keystone/infra/ocm-controller
+    version: ${OCM_CONTROLLER_VERSION}
+    provider:
+      name: sap
+    labels:
+      - name: sap.com/component
+        value: ocm-controller
+    resources:
+      - name: ocm-controller-chart
+        type: helmChart
+        version: ${OCM_CONTROLLER_VERSION}
+        access:
+          type: ociArtifact
+          imageReference: "ghcr.io/open-component-model/helm/ocm-controller:${OCM_CONTROLLER_VERSION}"
+
+
   # ─── Umbrella / infra top-level component ─────────────────────────────────────
   # References all infra sub-components. Sign this with --recursive to propagate
   # the signature to all referenced components.
@@ -117,3 +187,15 @@ components:
       - name: rabbitmq
         componentName: ocm.software/sap/keystone/infra/rabbitmq
         version: ${RABBITMQ_VERSION}
+      - name: cert-manager
+        componentName: ocm.software/sap/keystone/infra/cert-manager
+        version: ${CERT_MANAGER_VERSION}
+      - name: flux
+        componentName: ocm.software/sap/keystone/infra/flux
+        version: ${FLUX_VERSION}
+      - name: kro
+        componentName: ocm.software/sap/keystone/infra/kro
+        version: ${KRO_VERSION}
+      - name: ocm-controller
+        componentName: ocm.software/sap/keystone/infra/ocm-controller
+        version: ${OCM_CONTROLLER_VERSION}

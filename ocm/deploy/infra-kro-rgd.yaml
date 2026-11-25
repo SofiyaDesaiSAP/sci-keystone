@@ -28,6 +28,8 @@ spec:
       enableVault: "boolean"
       enableEso: "boolean"
       enableRabbitmq: "boolean"
+      # suspend: when true, all HelmReleases and OCIRepositories are suspended (manual gate).
+      suspend: "boolean"
 
   resources:
 
@@ -91,7 +93,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 10m
-        suspend: "${!schema.spec.enableVault}"
+        suspend: "${schema.spec.suspend || !schema.spec.enableVault}"
         url: "oci://${vaultChartResource.status.additional.oci.registry}/${vaultChartResource.status.additional.oci.repository}"
         ref:
           digest: "${vaultChartResource.status.additional.oci.digest}"
@@ -110,7 +112,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 5m
-        suspend: "${!schema.spec.enableVault}"
+        suspend: "${schema.spec.suspend || !schema.spec.enableVault}"
         releaseName: vault
         targetNamespace: vault
         chartRef:
@@ -173,7 +175,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 10m
-        suspend: "${!schema.spec.enableEso}"
+        suspend: "${schema.spec.suspend || !schema.spec.enableEso}"
         url: "oci://${esoChartResource.status.additional.oci.registry}/${esoChartResource.status.additional.oci.repository}"
         ref:
           digest: "${esoChartResource.status.additional.oci.digest}"
@@ -192,7 +194,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 5m
-        suspend: "${!schema.spec.enableEso}"
+        suspend: "${schema.spec.suspend || !schema.spec.enableEso}"
         releaseName: external-secrets
         targetNamespace: external-secrets
         chartRef:
@@ -244,7 +246,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 10m
-        suspend: "${!schema.spec.enableRabbitmq}"
+        suspend: "${schema.spec.suspend || !schema.spec.enableRabbitmq}"
         url: "oci://${rabbitmqChartResource.status.additional.oci.registry}/${rabbitmqChartResource.status.additional.oci.repository}"
         ref:
           digest: "${rabbitmqChartResource.status.additional.oci.digest}"
@@ -263,7 +265,7 @@ spec:
         namespace: monsoon3
       spec:
         interval: 5m
-        suspend: "${!schema.spec.enableRabbitmq}"
+        suspend: "${schema.spec.suspend || !schema.spec.enableRabbitmq}"
         releaseName: rabbitmq
         chartRef:
           kind: OCIRepository
