@@ -23,6 +23,12 @@ SIGNING_NAME        ?= keystone-sig
 SIGNING_KEY         ?= ocm/keystone-signing-key.pem
 SIGNING_PUBKEY      ?= ocm/keystone-signing-key-pub.pem
 
+# GitHub Actions ARC runner (once per CI cluster)
+GITHUB_REPO         ?= https://github.com/SofiyaDesaiSAP/sci-keystone
+ARC_NS              ?= arc-systems
+RUNNERS_NS          ?= arc-runners
+RUNNER_NAME         ?= sci-keystone-runner
+
 # Vault
 VAULT_ADDR          ?= http://127.0.0.1:8200
 VAULT_INIT_FILE     ?= vault/vault-init.json        # DO NOT commit this file — add to .gitignore
@@ -70,6 +76,10 @@ KC := KUBECONFIG=$(SHOOT_KUBECONFIG)
 help:
 	@echo ""
 	@echo "SAP SCI Keystone deployment — OCM + Flux (replaces Concourse)"
+	@echo ""
+	@echo "── CI/CD (GitHub Actions runner — once per CI cluster) ───────────"
+	@echo "  make arc-runner-install        Install ARC controller + sci-keystone-runner scale set"
+	@echo "  make arc-runner-status         Show ARC controller + runner pod status"
 	@echo ""
 	@echo "── Cluster Setup ─────────────────────────────────────────────────"
 	@echo "  make setup                     Create namespaces + label nodes"
@@ -248,6 +258,48 @@ bootstrap-status:
 	$(KC) kubectl get pods -n ocm-system
 	@echo "\n── Flux ──────────────────────────────────────────────────────────"
 	$(KC) kubectl get pods -n flux-system
+
+# ─── GitHub Actions ARC Runner ────────────────────────────────────────────────
+# Install once on the cluster that acts as the CI runner host. This cluster must
+# have SAP internal DNS so it can reach keppel.eu-nl-1.cloud.sap.
+# Requires: GITHUB_TOKEN env var — a fine-grained PAT scoped to this repo
+#           with Actions: Read/Write permissions.
+
+.PHONY: arc-runner-install
+arc-runner-install:
+	@test -n "$(GITHUB_TOKEN)" || (echo "Error: GITHUB_TOKEN not set — create a fine-grained PAT with Actions: Read/Write for $(GITHUB_REPO)"; exit 1)
+	@echo "── Installing ARC controller ──────────────────────────────────────────"
+	$(KC) helm upgrade --install arc \
+		oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
+		--namespace $(ARC_NS) \
+		--create-namespace \
+		--wait --timeout 5m
+	@echo "── Creating runner GitHub token secret ────────────────────────────────"
+	$(KC) kubectl create namespace $(RUNNERS_NS) --dry-run=client -o yaml | $(KC) kubectl apply -f -
+	$(KC) kubectl create secret generic $(RUNNER_NAME)-secret \
+		--namespace $(RUNNERS_NS) \
+		--from-literal=github_token="$(GITHUB_TOKEN)" \
+		--dry-run=client -o yaml | $(KC) kubectl apply -f -
+	@echo "── Installing runner scale set (label: $(RUNNER_NAME)) ───────────────"
+	$(KC) helm upgrade --install $(RUNNER_NAME) \
+		oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+		--namespace $(RUNNERS_NS) \
+		--set githubConfigUrl="$(GITHUB_REPO)" \
+		--set githubConfigSecret=$(RUNNER_NAME)-secret \
+		--set runnerScaleSetName=$(RUNNER_NAME) \
+		--set minRunners=1 \
+		--set maxRunners=3 \
+		--wait --timeout 5m
+	@echo "ARC runner installed. Verify with: make -f Makefile.scikeystone arc-runner-status"
+
+.PHONY: arc-runner-status
+arc-runner-status:
+	@echo "\n── ARC controller ────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(ARC_NS)
+	@echo "\n── Runner pods ───────────────────────────────────────────────────"
+	$(KC) kubectl get pods -n $(RUNNERS_NS)
+	@echo "\n── AutoscalingRunnerSet ──────────────────────────────────────────"
+	$(KC) kubectl get autoscalingrunnerset -n $(RUNNERS_NS) 2>/dev/null || true
 
 # ─── Keppel ───────────────────────────────────────────────────────────────────
 

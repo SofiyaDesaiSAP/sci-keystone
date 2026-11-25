@@ -95,6 +95,64 @@ Your Gardener Shoot (k8s-release)
 - [ ] cert-manager installed on cluster (Phase 0)
 - [ ] OCM controller v0.33.0 installed on cluster (Phase 0)
 - [ ] Flux installed on cluster (Phase 0)
+- [ ] GitHub Actions ARC runner installed on the CI cluster (Phase CI — once only)
+
+---
+
+## Phase CI — GitHub Actions ARC Runner (once per CI cluster)
+
+The CI workflow (`build-push-ocm-bundle.yaml`) needs to pull the keystone Helm chart from
+`keppel.eu-nl-1.cloud.sap`, which is only resolvable within SAP's internal network. GitHub's
+hosted runners (`ubuntu-latest`) cannot reach it.
+
+**Solution:** Deploy a self-hosted GitHub Actions runner as a pod inside your Gardener shoot
+cluster. The pod runs in SAP's network, can reach Keppel, and also has internet access to push
+to JFrog. This is a **one-time setup** — the same runner handles CI/CD for all future deployments.
+
+### What you need
+
+A **fine-grained GitHub PAT** (Personal Access Token):
+1. Go to GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+2. Set repository access: `SofiyaDesaiSAP/sci-keystone`
+3. Grant permissions: **Actions** → Read and Write
+4. Copy the token
+
+### Install
+
+```bash
+export GITHUB_TOKEN=<your-fine-grained-PAT>
+make -f Makefile.scikeystone arc-runner-install
+```
+
+This installs two things in the cluster:
+- **ARC controller** (`arc-systems` namespace) — watches GitHub for queued jobs
+- **Runner scale set** (`arc-runners` namespace, label `sci-keystone-runner`) — the actual runner pods
+
+### Verify
+
+```bash
+make -f Makefile.scikeystone arc-runner-status
+```
+
+You should see runner pods in `arc-runners` with status `Running`. In GitHub → repo Settings →
+Actions → Runners you will also see `sci-keystone-runner` listed as online.
+
+### Add GitHub secrets for JFrog
+
+Go to repo **Settings → Secrets and variables → Actions → New repository secret** and add:
+
+| Secret name         | Value                                      |
+|---------------------|--------------------------------------------|
+| `ARTIFACTORY_USER`  | Your JFrog username                        |
+| `ARTIFACTORY_TOKEN` | Your JFrog API token (not password)        |
+
+The `deploy.yaml` workflow additionally needs:
+
+| Secret / Variable   | Value                                      |
+|---------------------|--------------------------------------------|
+| `KEPPEL_USER`       | Secret: your Keppel username               |
+| `KEPPEL_TOKEN`      | Secret: your Keppel token                  |
+| `ON_SITE_REGISTRY`  | Variable: `keppel.eu-nl-1.cloud.sap/cloud-infrastructure-release-management` |
 
 ---
 

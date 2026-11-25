@@ -38,9 +38,12 @@ env:
 jobs:
 
   # ── Job 1: keystone application bundle ──────────────────────────────────────
+  # Requires SAP internal network: keystone chart lives on Keppel (keppel.eu-nl-1.cloud.sap)
+  # which is only resolvable within SAP's network. Run on the ARC self-hosted runner
+  # (label: sap-keppel) deployed inside the Gardener shoot cluster.
   build-keystone:
     name: Build and push keystone bundle
-    runs-on: ubuntu-latest
+    runs-on: sci-keystone-runner
 
     steps:
       - name: Checkout
