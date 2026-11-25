@@ -40,7 +40,7 @@ jobs:
   # ── Job 1: keystone application bundle ──────────────────────────────────────
   build-keystone:
     name: Build and push keystone bundle
-    runs-on: sap-keppel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -161,10 +161,10 @@ jobs:
             --repo oci://${CENTRAL_REGISTRY} \
             ocm.software/sap/keystone/core:${KEYSTONE_VERSION}
 
-  # ── Job 2: prerequisites bundle (vault + eso + rabbitmq) ───────────────────
+  # ── Job 2: prerequisites bundle (cert-manager, flux, kro, ocm-controller + vault, eso, rabbitmq) ───────────────────
   build-prerequisites:
     name: Build and push prerequisites bundle
-    runs-on: sap-keppel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout

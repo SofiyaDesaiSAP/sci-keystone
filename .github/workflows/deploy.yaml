@@ -1,8 +1,7 @@
 name: Transfer Keystone OCM Bundles to Keppel
 
 # CD: Transfers signed OCM bundles from JFrog Artifactory to the on-site Keppel registry.
-# Runs on a self-hosted runner (sap-keppel) inside the air-gapped environment that has
-# access to both JFrog (outbound) and Keppel (internal).
+# Runs on ubuntu-latest — both JFrog and Keppel are internet-accessible registries.
 #
 # Flow:
 #   JFrog Artifactory (sci-ocm-bundles.common.repositories.cloud.sap)
@@ -63,7 +62,7 @@ jobs:
     name: Transfer OCM bundles to Keppel
     needs: check-trigger
     if: needs.check-trigger.outputs.should_run == 'true'
-    runs-on: sap-keppel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
