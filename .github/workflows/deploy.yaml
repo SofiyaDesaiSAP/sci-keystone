@@ -105,6 +105,7 @@ jobs:
       - name: Transfer infra bundle (JFrog → Keppel)
         run: |
           ocm transfer componentversion \
+            --recursive \
             --copy-resources \
             oci://${CENTRAL_REGISTRY}//ocm.software/sap/keystone/infra:${INFRA_VERSION} \
             oci://${{ vars.ON_SITE_REGISTRY }}

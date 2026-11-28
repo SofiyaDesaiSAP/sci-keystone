@@ -84,9 +84,9 @@ _bootstrap_tool() {
   local ver
   ver=$(ocm get componentversion \
     --repo "oci://${ON_SITE_INFRA_REGISTRY}" "${component}" \
-    -o json 2>/dev/null \
-    | jq -r '[.items[].metadata.version] | sort | last // empty')
-  [[ -n "${ver}" ]] || die "${release}: cannot find component ${component} in ${ON_SITE_INFRA_REGISTRY}. Has deploy.yaml run successfully?"
+    -o json \
+    | jq -r '[.items[].metadata.version] | sort | last // empty') || true
+  [[ -n "${ver}" ]] || die "${release}: cannot find component ${component} in ${ON_SITE_INFRA_REGISTRY}. Has deploy.yaml run successfully? (tip: ocm transfer needs --recursive for sub-components)"
 
   local chart="${TMP}/bootstrap/${release}.tgz"
   mkdir -p "${TMP}/bootstrap"
