@@ -122,17 +122,27 @@ done
 TMP=$(mktemp -d)
 trap 'rm -rf "${TMP}"' EXIT
 
-[[ -n "${KEPPEL_TOKEN}" ]] && export OCM_REGISTRY_CREDS="${KEPPEL_USER}:${KEPPEL_TOKEN}"
-
 ok "All checks passed"
 echo "  ON_SITE_KEYSTONE_REGISTRY = ${ON_SITE_KEYSTONE_REGISTRY}"
 echo "  ON_SITE_INFRA_REGISTRY    = ${ON_SITE_INFRA_REGISTRY}"
 echo "  KUBECONFIG                = ${KUBECONFIG}"
 echo "  VAULT_INIT_FILE           = ${VAULT_INIT_FILE}"
-echo "  AUTH                      = ${KEPPEL_TOKEN:+authenticated (${KEPPEL_USER})}${KEPPEL_TOKEN:-anonymous}"
+if [[ -n "${KEPPEL_TOKEN}" ]]; then
+  echo "  AUTH                      = authenticated (${KEPPEL_USER})"
+else
+  echo "  AUTH                      = anonymous"
+fi
 echo "  DB_BACKUP_AUTH_URL        = ${DB_BACKUP_AUTH_URL}"
 echo "  DB_BACKUP_CONTAINER       = ${DB_BACKUP_CONTAINER}"
 echo "  DB_BACKUP_CREDENTIAL_ID   = ${DB_BACKUP_CREDENTIAL_ID}"
+
+# Log in to Keppel so both docker and OCM CLI can pull from it
+if [[ -n "${KEPPEL_TOKEN}" ]]; then
+  REGISTRY_HOST="${ON_SITE_INFRA_REGISTRY%%/*}"
+  echo "${KEPPEL_TOKEN}" | docker login "${REGISTRY_HOST}" \
+    -u "${KEPPEL_USER}" --password-stdin
+  ok "Logged in to ${REGISTRY_HOST}"
+fi
 
 # ── Step 1: Verify cluster connectivity ───────────────────────────────────────
 step "Step 1 — Verifying cluster connectivity"
