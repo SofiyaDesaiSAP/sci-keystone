@@ -111,9 +111,11 @@ components:
       - name: cert-manager-chart
         type: helmChart
         version: ${CERT_MANAGER_VERSION}
-        access:
-          type: ociArtifact
-          imageReference: "ghcr.io/cloudoperators/greenhouse-extensions/charts/cert-manager:${CERT_MANAGER_VERSION}"
+        input:
+          type: file
+          path: charts/cert-manager-${CERT_MANAGER_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
 
 
   # ─── Flux ─────────────────────────────────────────────────────────────────────
@@ -128,9 +130,11 @@ components:
       - name: flux-chart
         type: helmChart
         version: ${FLUX_VERSION}
-        access:
-          type: ociArtifact
-          imageReference: "ghcr.io/fluxcd-community/charts/flux2:${FLUX_VERSION}"
+        input:
+          type: file
+          path: charts/flux2-${FLUX_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
 
 
   # ─── kro ──────────────────────────────────────────────────────────────────────
@@ -145,9 +149,11 @@ components:
       - name: kro-chart
         type: helmChart
         version: ${KRO_VERSION}
-        access:
-          type: ociArtifact
-          imageReference: "registry.k8s.io/kro/charts/kro:${KRO_VERSION}"
+        input:
+          type: file
+          path: charts/kro-${KRO_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
 
 
   # ─── OCM controller ───────────────────────────────────────────────────────────
@@ -162,9 +168,11 @@ components:
       - name: ocm-controller-chart
         type: helmChart
         version: ${OCM_CONTROLLER_VERSION}
-        access:
-          type: ociArtifact
-          imageReference: "ghcr.io/open-component-model/helm/ocm-controller:${OCM_CONTROLLER_VERSION}"
+        input:
+          type: file
+          path: charts/ocm-controller-${OCM_CONTROLLER_VERSION}.tgz
+          mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+          compress: false
 
 
   # ─── Umbrella / infra top-level component ─────────────────────────────────────

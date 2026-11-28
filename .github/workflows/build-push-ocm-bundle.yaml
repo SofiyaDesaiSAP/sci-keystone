@@ -217,6 +217,36 @@ jobs:
             --version "${RABBITMQ_VERSION}"
           echo "Packaged rabbitmq-${RABBITMQ_VERSION}.tgz"
 
+      - name: Pull cert-manager chart
+        run: |
+          helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
+          helm repo update
+          helm pull jetstack/cert-manager \
+            --version "${CERT_MANAGER_VERSION}" \
+            --destination charts/
+          echo "Pulled cert-manager-${CERT_MANAGER_VERSION}.tgz"
+
+      - name: Pull flux chart
+        run: |
+          helm pull oci://ghcr.io/fluxcd-community/charts/flux2 \
+            --version "${FLUX_VERSION}" \
+            --destination charts/
+          echo "Pulled flux2-${FLUX_VERSION}.tgz"
+
+      - name: Pull kro chart
+        run: |
+          helm pull oci://ghcr.io/kro-run/kro/charts/kro \
+            --version "${KRO_VERSION}" \
+            --destination charts/
+          echo "Pulled kro-${KRO_VERSION}.tgz"
+
+      - name: Pull ocm-controller chart
+        run: |
+          helm pull oci://ghcr.io/open-component-model/ocm-controller \
+            --version "${OCM_CONTROLLER_VERSION}" \
+            --destination charts/
+          echo "Pulled ocm-controller-${OCM_CONTROLLER_VERSION}.tgz"
+
       - name: Expose charts to OCM (symlink repo-root charts/ into ocm/)
         run: ln -sf "$(pwd)/charts" ocm/charts
 
